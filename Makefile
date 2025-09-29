@@ -57,13 +57,13 @@ $(BPF_OBJ): xdp_monitor.c
 		 echo "   3. 检查系统信息: make info"; \
 		 exit 1)
 
-# 编译 Go 程序
-$(PROGRAM): $(BPF_OBJ) main.go go.mod
-	@echo "编译 Go 程序..."
-	$(GO) build -o $(PROGRAM) main.go
+# 编译 Go 程序（包含所有监控模式）
+$(PROGRAM): $(BPF_OBJ) main.go rdma_monitor.go nccl_monitor.go go.mod
+	@echo "编译多模式监控程序..."
+	$(GO) build -o $(PROGRAM) main.go rdma_monitor.go nccl_monitor.go
 
-# 构建所有程序
-build: $(PROGRAM) ## 编译 eBPF 和 Go 程序
+# 构建程序
+build: $(PROGRAM) ## 编译多模式监控程序
 
 # 运行程序 (需要 root 权限)
 run: build ## 运行程序 (需要 sudo 权限)
@@ -91,6 +91,16 @@ run-with-interface: build ## 运行程序并指定网络接口 (INTERFACE=eth0)
 interfaces: ## 显示可用的网络接口
 	@echo "可用的网络接口："
 	@ip link show | grep -E "^[0-9]+:" | awk '{print "  " $$2}' | sed 's/://'
+
+# 运行 RDMA 监控模式
+run-rdma: build ## 运行 RDMA 监控模式
+	@echo "启动 RDMA 监控模式..."
+	./$(PROGRAM) -m rdma -d mlx5_0 -i ibs8f0
+
+# 运行 NCCL 监控模式
+run-nccl: build ## 运行 NCCL 监控模式
+	@echo "启动 NCCL 监控模式..."
+	./$(PROGRAM) -m nccl -d mlx5_0 -i ibs8f0
 
 # 清理编译文件
 clean: ## 清理编译生成的文件
@@ -138,9 +148,27 @@ docker-run: docker-build ## 使用 Docker 运行程序
 
 # 使用 docker-compose 启动
 docker-up: ## 使用 docker-compose 启动服务
-	@echo "使用 docker-compose 启动服务 (接口: $(INTERFACE))..."
-	INTERFACE=$(INTERFACE) docker-compose up --build -d
+	@echo "使用 docker-compose 启动服务 (模式: $(MODE), 接口: $(INTERFACE), 设备: $(DEVICE))..."
+	MODE=$(MODE) INTERFACE=$(INTERFACE) DEVICE=$(DEVICE) docker-compose up --build -d
 	@echo "✅ 服务已启动，使用 'make docker-logs' 查看日志"
+
+# 启动 XDP 监控模式
+docker-up-xdp: ## 启动 XDP 监控模式
+	@echo "启动 XDP 监控模式..."
+	MODE=xdp INTERFACE=$(INTERFACE) DEVICE=$(DEVICE) docker-compose up --build -d
+	@echo "✅ XDP 监控已启动"
+
+# 启动 RDMA 监控模式
+docker-up-rdma: ## 启动 RDMA 监控模式
+	@echo "启动 RDMA 监控模式..."
+	MODE=rdma INTERFACE=$(INTERFACE) DEVICE=$(DEVICE) docker-compose up --build -d
+	@echo "✅ RDMA 监控已启动"
+
+# 启动 NCCL 监控模式
+docker-up-nccl: ## 启动 NCCL 监控模式
+	@echo "启动 NCCL 监控模式..."
+	MODE=nccl INTERFACE=$(INTERFACE) DEVICE=$(DEVICE) docker-compose up --build -d
+	@echo "✅ NCCL 监控已启动"
 
 # 停止 docker-compose 服务
 docker-down: ## 停止 docker-compose 服务

@@ -31,11 +31,17 @@
 **无需安装任何依赖，一键运行：**
 
 ```bash
-# 最简单的方式 - 使用默认网络接口
-make docker-up
+# XDP 模式 - 监控经过网络栈的流量
+make docker-up-xdp INTERFACE=eth0
 
-# 指定网络接口
-make docker-up INTERFACE=enp0s3
+# RDMA 模式 - 监控 RDMA 设备统计
+make docker-up-rdma INTERFACE=ibs8f0 DEVICE=mlx5_0
+
+# NCCL 模式 - 监控 RDMA 硬件统计
+make docker-up-nccl INTERFACE=ibs8f0 DEVICE=mlx5_0
+
+# 通用方式 - 通过环境变量指定模式
+make docker-up MODE=rdma INTERFACE=ibs8f0 DEVICE=mlx5_0
 
 # 查看运行日志
 make docker-logs
@@ -151,11 +157,16 @@ wget -q -O /dev/null http://example.com
 ./xtrace-catch -l
 ./xtrace-catch --list
 
-# 指定网络接口运行 (推荐)
-sudo ./xtrace-catch -i eth0
-sudo ./xtrace-catch --interface enp0s3
+# XDP 模式 - 监控经过网络栈的流量
+sudo ./xtrace-catch -m xdp -i eth0
 
-# 使用默认接口运行
+# RDMA 模式 - 监控 RDMA 设备统计
+./xtrace-catch -m rdma -d mlx5_0 -i ibs8f0
+
+# NCCL 模式 - 监控 RDMA 硬件统计
+./xtrace-catch -m nccl -d mlx5_0 -i ibs8f0
+
+# 使用默认模式运行
 sudo ./xtrace-catch
 ```
 
@@ -314,6 +325,9 @@ A: 这是 InfiniBand 设计的必然结果。原生 InfiniBand 使用硬件直�
 ```bash
 # Docker 操作（推荐）
 make docker-up       # 启动 Docker 服务
+make docker-up-xdp   # 启动 XDP 监控模式
+make docker-up-rdma  # 启动 RDMA 监控模式
+make docker-up-nccl  # 启动 NCCL 监控模式
 make docker-down     # 停止 Docker 服务
 make docker-logs     # 查看运行日志
 make docker-build    # 构建镜像

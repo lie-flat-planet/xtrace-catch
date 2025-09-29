@@ -10,6 +10,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"os/exec"
 	"os/signal"
 	"syscall"
 	"time"
@@ -32,6 +33,8 @@ type FlowStats struct {
 	Bytes   uint64
 }
 
+// RDMA 和 NCCL 监控的结构体定义在各自的文件中
+
 func ipToStr(ip uint32) string {
 	b := make([]byte, 4)
 	binary.LittleEndian.PutUint32(b, ip)
@@ -43,25 +46,37 @@ func main() {
 	var iface string
 	var showHelp bool
 	var listInterfaces bool
+	var monitorMode string
+	var rdmaDevice string
 
 	flag.StringVar(&iface, "i", "", "网络接口名称 (例如: eth0, enp0s3)")
 	flag.StringVar(&iface, "interface", "", "网络接口名称 (例如: eth0, enp0s3)")
+	flag.StringVar(&monitorMode, "m", "xdp", "监控模式: xdp, rdma, nccl")
+	flag.StringVar(&monitorMode, "mode", "xdp", "监控模式: xdp, rdma, nccl")
+	flag.StringVar(&rdmaDevice, "d", "mlx5_0", "RDMA 设备名称 (用于 rdma/nccl 模式)")
+	flag.StringVar(&rdmaDevice, "device", "mlx5_0", "RDMA 设备名称 (用于 rdma/nccl 模式)")
 	flag.BoolVar(&showHelp, "h", false, "显示帮助信息")
 	flag.BoolVar(&showHelp, "help", false, "显示帮助信息")
 	flag.BoolVar(&listInterfaces, "l", false, "列出所有可用的网络接口")
 	flag.BoolVar(&listInterfaces, "list", false, "列出所有可用的网络接口")
 
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "XTrace-Catch: eBPF 网络流量监控器\n\n")
+		fmt.Fprintf(os.Stderr, "XTrace-Catch: 多模式网络流量监控器\n\n")
 		fmt.Fprintf(os.Stderr, "用法: %s [选项]\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "选项:\n")
 		flag.PrintDefaults()
+		fmt.Fprintf(os.Stderr, "\n监控模式:\n")
+		fmt.Fprintf(os.Stderr, "  xdp  - eBPF/XDP 模式 (默认，监控经过网络栈的流量)\n")
+		fmt.Fprintf(os.Stderr, "  rdma - RDMA 模式 (监控 RDMA 设备统计)\n")
+		fmt.Fprintf(os.Stderr, "  nccl - NCCL 模式 (监控 RDMA 硬件统计)\n")
 		fmt.Fprintf(os.Stderr, "\n示例:\n")
-		fmt.Fprintf(os.Stderr, "  %s -i eth0        # 监控 eth0 接口\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  %s --list         # 列出所有网络接口\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  sudo %s           # 使用默认接口 (eth0)\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -m xdp -i eth0        # XDP 模式监控 eth0 接口\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -m rdma -d mlx5_0     # RDMA 模式监控 mlx5_0 设备\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -m nccl -d mlx5_0     # NCCL 模式监控 mlx5_0 设备\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s --list                 # 列出所有网络接口\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "\n环境变量:\n")
 		fmt.Fprintf(os.Stderr, "  NETWORK_INTERFACE  设置默认网络接口\n")
+		fmt.Fprintf(os.Stderr, "  MONITOR_MODE       设置默认监控模式\n")
 	}
 
 	flag.Parse()
@@ -78,12 +93,24 @@ func main() {
 		return
 	}
 
+	// 确定监控模式：命令行参数 > 环境变量 > 默认值
+	if monitorMode == "" {
+		monitorMode = os.Getenv("MONITOR_MODE")
+	}
+	if monitorMode == "" {
+		monitorMode = "xdp" // 默认值
+	}
+
 	// 确定网络接口：命令行参数 > 环境变量 > 默认值
 	if iface == "" {
 		iface = os.Getenv("NETWORK_INTERFACE")
 	}
 	if iface == "" {
-		iface = "eth0" // 默认值
+		if monitorMode == "xdp" {
+			iface = "eth0" // XDP 模式默认接口
+		} else {
+			iface = "ibs8f0" // RDMA 模式默认接口
+		}
 	}
 
 	// 验证网络接口是否存在
@@ -94,7 +121,22 @@ func main() {
 		log.Fatalf("请使用 -i 参数指定正确的网络接口")
 	}
 
-	log.Printf("准备监控网络接口: %s", iface)
+	// 根据监控模式启动相应的监控程序
+	switch monitorMode {
+	case "xdp":
+		startXDPMonitor(iface)
+	case "rdma":
+		startRDMAMonitor(rdmaDevice, iface)
+	case "nccl":
+		startNCCLMonitor(rdmaDevice, iface)
+	default:
+		log.Fatalf("不支持的监控模式: %s (支持的模式: xdp, rdma, nccl)", monitorMode)
+	}
+}
+
+// XDP 监控模式
+func startXDPMonitor(iface string) {
+	log.Printf("启动 XDP 监控模式，网络接口: %s", iface)
 
 	spec, err := ebpf.LoadCollectionSpec("xdp_monitor.o")
 	if err != nil {
@@ -110,6 +152,7 @@ func main() {
 	}
 	defer objs.XdpMonitor.Close()
 	defer objs.Flows.Close()
+
 	linkRef, err := link.AttachXDP(link.XDPOptions{
 		Program:   objs.XdpMonitor,
 		Interface: ifaceIndex(iface),
@@ -149,6 +192,42 @@ loop:
 		}
 	}
 }
+
+// RDMA 监控模式
+func startRDMAMonitor(deviceName, iface string) {
+	log.Printf("启动 RDMA 监控模式，设备: %s，接口: %s", deviceName, iface)
+
+	// 检查必要的工具
+	if _, err := exec.LookPath("ibstat"); err != nil {
+		log.Fatalf("ibstat 工具未找到，请安装: sudo apt-get install infiniband-diags")
+	}
+
+	// 创建并启动 RDMA 监控器
+	monitor := NewRDMAMonitor(deviceName, iface)
+	monitor.Start()
+}
+
+// NCCL 监控模式
+func startNCCLMonitor(deviceName, iface string) {
+	log.Printf("启动 NCCL 监控模式，设备: %s，接口: %s", deviceName, iface)
+
+	// 检查必要的工具
+	if _, err := exec.LookPath("ibv_devinfo"); err != nil {
+		log.Fatalf("ibv_devinfo 工具未找到，请安装: sudo apt-get install perftest rdma-core")
+	}
+
+	// 创建并启动 NCCL 监控器
+	// 将设备名称转换为设备 ID（简化处理）
+	deviceID := 0
+	if deviceName == "mlx5_1" {
+		deviceID = 1
+	}
+
+	monitor := NewNCCLMonitor(deviceID, iface)
+	monitor.Start()
+}
+
+// RDMA 和 NCCL 监控的实现函数在各自的文件中
 
 // 获取网卡 index
 func ifaceIndex(name string) int {

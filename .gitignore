@@ -32,3 +32,4 @@ go.work.sum
 
 # 日志文件
 *.log
+.DS_Store
