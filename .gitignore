@@ -1,0 +1,35 @@
+# 编译产生的文件
+xtrace-catch
+xdp_monitor.o
+*.o
+
+# Go 相关
+vendor/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# 测试覆盖率
+*.out
+
+# 依赖管理
+go.work
+go.work.sum
+
+# IDE 和编辑器
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# Docker
+.dockerignore
+
+# 日志文件
+*.log
