@@ -4,39 +4,9 @@
 
 ## ⚠️ 重要说明
 
-**eBPF 和 XDP 是 Linux 内核特有的技术，无法直接在 macOS 上运行。** 本项目需要在 Linux 环境中执行。
+**本项目使用 eBPF 和 XDP 技术，需要在 Linux 环境中运行。** 支持内核版本 4.1+。
 
-## 🚀 在 macOS 上运行
-
-### 使用 Lima（轻量级 Linux VM）
-
-1. **安装 Lima**
-   ```bash
-   brew install lima
-   ```
-
-2. **创建 Linux VM**
-   ```bash
-   limactl start --name=dev template://ubuntu-lts
-   limactl shell dev
-   ```
-
-3. **在 VM 中设置项目**
-   ```bash
-   # 安装依赖
-   sudo apt-get update
-   sudo apt-get install -y clang llvm libbpf-dev linux-headers-$(uname -r) golang-go
-
-   # 克隆或复制项目到 VM 中
-   # 然后执行编译和运行
-   make deps
-   make build
-   sudo make run
-   ```
-
-## 🛠️ 本地编译（仅限 Linux）
-
-如果你在 Linux 环境中，可以直接编译运行：
+## 🛠️ 快速开始
 
 ```bash
 # 安装依赖
@@ -91,6 +61,9 @@ sudo make run-with-interface INTERFACE=enp0s3
 
 # 列出网络接口
 make interfaces
+
+# 显示系统信息
+make info
 ```
 
 ### 4. 程序特性
@@ -99,6 +72,7 @@ make interfaces
 - 按 Ctrl+C 可以安全退出
 - 需要 root 权限来加载 eBPF 程序
 - 自动验证网络接口是否存在
+- 高性能内核级数据包处理
 
 ### 5. 输出格式
 
@@ -109,22 +83,28 @@ XDP program loaded on eth0
 10.0.0.1:443 -> 10.0.0.5:45678 proto=6 packets=5 bytes=800
 ```
 
+**输出说明：**
+- `proto=6` 表示 TCP 协议
+- `proto=17` 表示 UDP 协议
+- `packets` 为数据包数量
+- `bytes` 为总字节数
+
 ## 🔧 常见问题
 
 ### Q1: 权限不足错误？
 A: eBPF 需要 root 权限，请使用 `sudo` 运行程序。
 
 ### Q2: 找不到网络接口？
-A: 检查网络接口名称，使用 `ip link show` 查看可用接口，常见名称有 `eth0`、`enp0s3` 等。
+A: 使用 `./xtrace-catch -l` 查看可用接口，或 `ip link show` 命令查看系统网络接口。
 
 ### Q3: 编译失败，找不到头文件？
 A: 确保安装了内核头文件：`sudo apt-get install linux-headers-$(uname -r)`
 
-### Q4: 在虚拟机中看不到网络流量？
-A: 确保虚拟机的网络模式允许监控流量，桥接模式通常效果更好。
+### Q4: eBPF 程序加载失败？
+A: 检查内核版本是否支持 eBPF，通常需要内核版本 >= 4.1。使用 `make info` 查看系统信息。
 
-### Q5: eBPF 程序加载失败？
-A: 检查内核版本是否支持 eBPF，通常需要内核版本 >= 4.1。
+### Q5: 在虚拟机中看不到网络流量？
+A: 确保虚拟机的网络模式允许监控流量，桥接模式通常效果更好。
 
 ## 📁 项目结构
 
@@ -153,27 +133,33 @@ A: 检查内核版本是否支持 eBPF，通常需要内核版本 >= 4.1。
 - **XDP**: 高性能网络数据路径
 - **Clang/LLVM**: eBPF 程序编译器
 
-## 🚀 编译命令
+## 🚀 Makefile 命令参考
 
 ```bash
-# 安装所有依赖
-make deps
+# 基本命令
+make help         # 显示帮助信息
+make deps         # 安装编译依赖
+make build        # 编译程序
+make clean        # 清理编译文件
 
-# 编译 eBPF 和 Go 程序
-make build
+# 运行命令
+sudo make run                              # 使用默认接口
+sudo make run-with-interface INTERFACE=eth0  # 指定接口
 
-# 运行程序
-sudo make run
-
-# 检查语法
-make check
-
-# 清理编译文件
-make clean
-
-# 显示帮助
-make help
+# 辅助命令
+make check        # 检查代码语法
+make interfaces   # 显示可用网络接口
+make info         # 显示系统信息
+make test-build   # 测试编译
 ```
+
+## 🚀 性能特性
+
+- **零拷贝处理** - 直接在网卡 DMA 缓冲区处理数据包
+- **内核空间执行** - 避免用户态/内核态切换开销
+- **XDP 早期拦截** - 在网络栈最早期处理，性能最高
+- **原子操作统计** - 多核安全的统计更新
+- **高效哈希表** - 支持同时监控 10240 个网络流
 
 ## 🤝 贡献
 

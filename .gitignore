@@ -23,10 +23,9 @@ go.work.sum
 .idea/
 *.swp
 *.swo
-*~
 
-# macOS
-.DS_Store
+# Linux 系统文件
+*~
 
 # Docker
 .dockerignore
