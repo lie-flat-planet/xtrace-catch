@@ -23,7 +23,10 @@ services:
     
     # Environment variables
     environment:
-      - NETWORK_INTERFACE=${INTERFACE:-eth0}
+      - NETWORK_INTERFACE=${INTERFACE:-ens8f1np1}
+    
+    # Command line arguments
+    command: ["-i", "ens8f1np1"]
     
     # Container labels
     labels:

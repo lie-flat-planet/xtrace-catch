@@ -1,6 +1,6 @@
 # XTrace-Catch: eBPF 网络流量监控器
 
-这是一个基于 eBPF/XDP 技术的网络流量监控工具，用于实时捕获和分析网络数据包。
+这是一个基于 eBPF/XDP 技术的高性能网络流量监控工具，支持以太网和 InfiniBand 协议，用于实时捕获和分析网络数据包。
 
 ## ⚠️ 重要说明
 
@@ -195,6 +195,7 @@ make info
 
 ### 5. 输出格式
 
+**以太网流量：**
 ```
 准备监控网络接口: eth0
 XDP program loaded on eth0
@@ -202,11 +203,17 @@ XDP program loaded on eth0
 10.0.0.1:443 -> 10.0.0.5:45678 proto=6 packets=5 bytes=800
 ```
 
+**InfiniBand 流量：**
+```
+准备监控网络接口: ibs8f0
+XDP program loaded on ibs8f0
+194:0 -> 193:0 proto=8 packets=1000 bytes=65536000
+```
+
 **输出说明：**
-- `proto=6` 表示 TCP 协议
-- `proto=17` 表示 UDP 协议
-- `packets` 为数据包数量
-- `bytes` 为总字节数
+- **以太网流量**：`proto=6` 表示 TCP 协议，`proto=17` 表示 UDP 协议
+- **InfiniBand 流量**：`194:0` 表示源 QPN:LID，`proto=8` 表示 RDMA_WRITE opcode
+- `packets` 为数据包数量，`bytes` 为总字节数
 
 ## 🔧 常见问题
 
@@ -224,6 +231,34 @@ A: 检查内核版本是否支持 eBPF，通常需要内核版本 >= 4.1。使�
 
 ### Q5: 在虚拟机中看不到网络流量？
 A: 确保虚拟机的网络模式允许监控流量，桥接模式通常效果更好。
+
+### Q6: 如何监控 InfiniBand 流量？
+A: 使用 `ibdev2netdev` 命令查看 InfiniBand 设备对应的网络接口，然后使用该接口启动监控：
+```bash
+# 查看 InfiniBand 设备映射
+ibdev2netdev
+
+# 使用对应的网络接口启动监控
+make docker-up INTERFACE=ibs8f0
+```
+
+### Q7: RDMA 测试没有流量输出？
+A: 确保：
+1. 使用正确的 InfiniBand 网络接口
+2. RDMA 设备状态正常
+3. 网络接口处于 UP 状态
+
+### Q8: 为什么原生 InfiniBand 流量检测不到？
+A: 这是 InfiniBand 设计的必然结果。原生 InfiniBand 使用硬件直通技术，数据包直接在用户空间和硬件之间传输，完全绕过内核网络栈，因此 XDP 程序无法检测到。
+
+**监控层级对比：**
+- **NCCL 等 RDMA 工具**：在收费站（应用层）统计所有通过的车辆
+- **XDP 程序**：在某个路段（网络栈）统计，但有些车辆走的是专用通道（硬件直通）
+
+**解决方案：**
+1. 使用专门的 RDMA 监控工具（如 `ibstat`、`ibv_devinfo`）
+2. 配置 RoCE 模式，让 RDMA 流量经过以太网栈
+3. 使用应用层统计（如 NCCL 内置的统计功能）
 
 ## 📁 项目结构
 
@@ -254,6 +289,25 @@ A: 确保虚拟机的网络模式允许监控流量，桥接模式通常效果�
 - **eBPF**: 内核级数据包处理
 - **XDP**: 高性能网络数据路径
 - **Clang/LLVM**: eBPF 程序编译器
+- **InfiniBand**: 支持 RDMA 协议监控（有限支持）
+- **Docker**: 跨平台部署支持
+
+### 🔍 监控能力说明
+
+**本工具可以监控：**
+- ✅ 以太网流量（TCP/UDP）
+- ✅ RoCE 流量（如果经过内核网络栈）
+- ✅ 封装在以太网中的 InfiniBand 流量
+
+**本工具无法监控：**
+- ❌ 原生 InfiniBand 硬件直通流量
+- ❌ 绕过内核的 RDMA 流量
+- ❌ 直接在硬件层面处理的流量
+
+**为什么有这些限制？**
+- **XDP 工作在内核网络栈**：只能看到经过网络栈的数据包
+- **InfiniBand 设计目标**：为了追求最低延迟，数据包直接通过硬件处理
+- **监控层级差异**：应用层工具（如 NCCL）可以直接访问硬件统计，而内核层工具（如 XDP）受限于网络栈
 
 ## 🚀 Makefile 命令参考
 
@@ -263,6 +317,7 @@ make docker-up       # 启动 Docker 服务
 make docker-down     # 停止 Docker 服务
 make docker-logs     # 查看运行日志
 make docker-build    # 构建镜像
+make docker-shell    # 进入容器 shell
 make docker-clean    # 清理 Docker 资源
 
 # 本地编译
@@ -273,7 +328,6 @@ sudo make run-with-interface INTERFACE=eth0  # 指定接口
 
 # 辅助命令
 make help         # 显示帮助信息
-make check        # 检查代码语法
 make interfaces   # 显示可用网络接口
 make info         # 显示系统信息
 make clean        # 清理编译文件

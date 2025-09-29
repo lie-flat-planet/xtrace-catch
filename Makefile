@@ -23,25 +23,16 @@ help: ## 显示帮助信息
 	@echo "可用命令："
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-12s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-# 安装依赖 (支持多种发行版)
+# 安装依赖
 deps: ## 安装编译依赖
 	@echo "安装 eBPF 编译依赖..."
 	@if command -v apt-get >/dev/null 2>&1; then \
 		echo "检测到 Debian/Ubuntu 系统..."; \
 		sudo apt-get update; \
-		sudo apt-get install -y clang llvm libbpf-dev linux-headers-$$(uname -r) build-essential pkg-config; \
-	elif command -v dnf >/dev/null 2>&1; then \
-		echo "检测到 Fedora 系统..."; \
-		sudo dnf install -y clang llvm libbpf-devel kernel-headers kernel-devel make gcc pkg-config; \
-	elif command -v yum >/dev/null 2>&1; then \
-		echo "检测到 CentOS/RHEL 系统..."; \
-		sudo yum install -y clang llvm libbpf-devel kernel-headers-$$(uname -r) kernel-devel-$$(uname -r) make gcc pkg-config; \
-	elif command -v pacman >/dev/null 2>&1; then \
-		echo "检测到 Arch Linux 系统..."; \
-		sudo pacman -S --noconfirm clang llvm libbpf linux-headers base-devel pkg-config; \
+		sudo apt-get install -y clang llvm libbpf-dev linux-headers-$$(uname -r) build-essential pkg-config libibverbs-dev; \
 	else \
-		echo "❌ 无法自动检测包管理器"; \
-		echo "请手动安装: clang llvm libbpf-dev linux-headers-$$(uname -r)"; \
+		echo "❌ 推荐使用 Docker: make docker-up"; \
+		echo "手动安装: clang llvm libbpf-dev linux-headers-$$(uname -r) libibverbs-dev"; \
 		exit 1; \
 	fi
 	@echo "检查 Go 版本..."
@@ -96,26 +87,10 @@ run-with-interface: build ## 运行程序并指定网络接口 (INTERFACE=eth0)
 	fi
 	./$(PROGRAM) -i $(INTERFACE)
 
-# 检查语法和格式
-check: ## 检查代码语法
-	@echo "检查 Go 代码..."
-	$(GO) vet ./...
-	$(GO) fmt ./...
-	@echo "检查 eBPF 程序语法..."
-	$(CLANG) -fsyntax-only -target bpf xdp_monitor.c
-
 # 显示网络接口
 interfaces: ## 显示可用的网络接口
 	@echo "可用的网络接口："
 	@ip link show | grep -E "^[0-9]+:" | awk '{print "  " $$2}' | sed 's/://'
-
-# 测试编译
-test-build: ## 测试编译但不生成可执行文件
-	@echo "测试 eBPF 编译..."
-	$(CLANG) -fsyntax-only -target bpf xdp_monitor.c
-	@echo "测试 Go 编译..."
-	$(GO) build -o /dev/null main.go
-	@echo "编译测试通过！"
 
 # 清理编译文件
 clean: ## 清理编译生成的文件
@@ -138,11 +113,6 @@ info: ## 显示系统和依赖信息
 		echo "  BPF 文件系统: ✓ 已挂载"; \
 	else \
 		echo "  BPF 文件系统: ✗ 未挂载"; \
-	fi
-	@if grep -q CONFIG_BPF=y /boot/config-$$(uname -r) 2>/dev/null; then \
-		echo "  内核 BPF 支持: ✓ 已启用"; \
-	else \
-		echo "  内核 BPF 支持: ? 无法确定"; \
 	fi
 
 # ===========================================
@@ -178,15 +148,6 @@ docker-down: ## 停止 docker-compose 服务
 	docker-compose down
 	@echo "✅ 服务已停止"
 
-# 查看服务日志
-docker-logs: ## 查看服务日志
-	docker-compose logs -f xtrace-catch
-
-# 显示网络接口信息（调试用）
-docker-network-info: ## 显示主机网络接口信息
-	@echo "获取主机网络接口信息..."
-	docker-compose --profile debug run --rm network-info
-
 # 进入运行中的容器
 docker-shell: ## 进入运行中的容器 shell
 	@echo "进入容器 shell..."
@@ -203,31 +164,3 @@ docker-clean: ## 清理 Docker 镜像和容器
 	-docker-compose down --rmi all --volumes --remove-orphans
 	-docker rmi $(IMAGE_NAME):$(IMAGE_TAG) 2>/dev/null || true
 	@echo "✅ Docker 资源清理完成"
-
-# Docker 快速测试
-docker-test: ## 构建镜像并快速测试
-	@echo "Docker 快速测试..."
-	docker build -t $(IMAGE_NAME):test .
-	@echo "✅ 构建成功，运行测试..."
-	docker run --rm $(IMAGE_NAME):test --help
-	@echo "✅ Docker 测试通过"
-
-# 显示 Docker 相关信息
-docker-info: ## 显示 Docker 环境信息
-	@echo "=== Docker 环境信息 ==="
-	@echo "Docker 版本: $$(docker --version || echo 'Docker 未安装')"
-	@echo "Docker Compose 版本: $$(docker-compose --version || echo 'Docker Compose 未安装')"
-	@echo ""
-	@echo "=== 镜像信息 ==="
-	@if docker images $(IMAGE_NAME) --format "table {{.Repository}}:{{.Tag}}\t{{.Size}}\t{{.CreatedAt}}" 2>/dev/null | tail -n +2 | grep -q .; then \
-		docker images $(IMAGE_NAME) --format "table {{.Repository}}:{{.Tag}}\t{{.Size}}\t{{.CreatedAt}}"; \
-	else \
-		echo "暂无 $(IMAGE_NAME) 镜像，使用 'make docker-build' 构建"; \
-	fi
-	@echo ""
-	@echo "=== 容器状态 ==="
-	@if docker ps -a --filter name=xtrace-catch --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | tail -n +2 | grep -q .; then \
-		docker ps -a --filter name=xtrace-catch --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"; \
-	else \
-		echo "暂无相关容器"; \
-	fi

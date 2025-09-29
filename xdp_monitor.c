@@ -33,10 +33,13 @@ int xdp_monitor(struct xdp_md *ctx) {
     void *data_end = (void *)(long)ctx->data_end;
     void *data = (void *)(long)ctx->data;
 
-    struct ethhdr *eth = data;
-    if ((void *)(eth + 1) > data_end)
+    // 检查数据包长度
+    if (data + sizeof(struct ethhdr) > data_end)
         return XDP_PASS;
 
+    struct ethhdr *eth = data;
+    
+    // 处理以太网协议
     if (eth->h_proto == __constant_htons(ETH_P_IP)) {
         struct iphdr *ip = (void *)eth + sizeof(*eth);
         if ((void *)(ip + 1) > data_end)
@@ -64,6 +67,46 @@ int xdp_monitor(struct xdp_md *ctx) {
             __sync_fetch_and_add(&val->bytes, data_end - data);
         }
     }
+    // 处理 InfiniBand 相关协议
+    else if (eth->h_proto == __constant_htons(0x8915) ||  // ETH_P_IB
+             eth->h_proto == __constant_htons(0x8914)) {  // ETH_P_IB_IP
+        // InfiniBand/RDMA 数据包处理
+        struct flow_key key = {};
+        key.src_ip = 0x01000000;  // 标记为 InfiniBand 流量
+        key.dst_ip = 0x02000000;  // 标记为 InfiniBand 流量
+        key.proto = eth->h_proto; // 使用实际的协议类型
+        key.src_port = 0;
+        key.dst_port = 0;
+
+        struct flow_stats *val = bpf_map_lookup_elem(&flows, &key);
+        if (!val) {
+            struct flow_stats init = {1, data_end - data};
+            bpf_map_update_elem(&flows, &key, &init, BPF_ANY);
+        } else {
+            __sync_fetch_and_add(&val->packets, 1);
+            __sync_fetch_and_add(&val->bytes, data_end - data);
+        }
+    }
+    // 处理其他协议（包括可能的 RDMA over Ethernet）
+    else {
+        // 通用流量统计 - 捕获所有其他协议
+        struct flow_key key = {};
+        key.src_ip = 0x00000000;
+        key.dst_ip = 0x00000000;
+        key.proto = eth->h_proto;
+        key.src_port = 0;
+        key.dst_port = 0;
+
+        struct flow_stats *val = bpf_map_lookup_elem(&flows, &key);
+        if (!val) {
+            struct flow_stats init = {1, data_end - data};
+            bpf_map_update_elem(&flows, &key, &init, BPF_ANY);
+        } else {
+            __sync_fetch_and_add(&val->packets, 1);
+            __sync_fetch_and_add(&val->bytes, data_end - data);
+        }
+    }
+    
     return XDP_PASS;
 }
 

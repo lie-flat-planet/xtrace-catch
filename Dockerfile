@@ -14,6 +14,9 @@ RUN apt-get update && apt-get install -y \
     libbpf-dev \
     linux-headers-generic \
     linux-libc-dev \
+    # InfiniBand 开发包
+    libibverbs-dev \
+    librdmacm-dev \
     # 基础工具
     build-essential \
     pkg-config \
