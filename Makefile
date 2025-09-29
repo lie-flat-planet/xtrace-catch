@@ -1,15 +1,20 @@
-.PHONY: help deps build run check clean
+.PHONY: help deps build run check clean docker-build docker-run docker-up docker-down docker-logs
 
 # 默认目标
 .DEFAULT_GOAL := help
 
-# 程序名称
+# 程序名称和版本
 PROGRAM := xtrace-catch
 BPF_OBJ := xdp_monitor.o
+IMAGE_NAME := xtrace-catch
+IMAGE_TAG := latest
 
 # 编译器设置
 CLANG := clang
 GO := go
+
+# Docker 设置
+INTERFACE ?= eth0
 
 # 帮助信息
 help: ## 显示帮助信息
@@ -18,18 +23,48 @@ help: ## 显示帮助信息
 	@echo "可用命令："
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-12s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-# 安装依赖 (仅适用于 Ubuntu/Debian)
+# 安装依赖 (支持多种发行版)
 deps: ## 安装编译依赖
 	@echo "安装 eBPF 编译依赖..."
-	sudo apt-get update
-	sudo apt-get install -y clang llvm libbpf-dev linux-headers-$$(uname -r)
+	@if command -v apt-get >/dev/null 2>&1; then \
+		echo "检测到 Debian/Ubuntu 系统..."; \
+		sudo apt-get update; \
+		sudo apt-get install -y clang llvm libbpf-dev linux-headers-$$(uname -r) build-essential pkg-config; \
+	elif command -v dnf >/dev/null 2>&1; then \
+		echo "检测到 Fedora 系统..."; \
+		sudo dnf install -y clang llvm libbpf-devel kernel-headers kernel-devel make gcc pkg-config; \
+	elif command -v yum >/dev/null 2>&1; then \
+		echo "检测到 CentOS/RHEL 系统..."; \
+		sudo yum install -y clang llvm libbpf-devel kernel-headers-$$(uname -r) kernel-devel-$$(uname -r) make gcc pkg-config; \
+	elif command -v pacman >/dev/null 2>&1; then \
+		echo "检测到 Arch Linux 系统..."; \
+		sudo pacman -S --noconfirm clang llvm libbpf linux-headers base-devel pkg-config; \
+	else \
+		echo "❌ 无法自动检测包管理器"; \
+		echo "请手动安装: clang llvm libbpf-dev linux-headers-$$(uname -r)"; \
+		exit 1; \
+	fi
 	@echo "检查 Go 版本..."
-	@$(GO) version || (echo "请安装 Go 1.21+ 版本" && exit 1)
+	@$(GO) version || (echo "请安装 Go 1.24+ 版本" && exit 1)
+
 
 # 编译 eBPF 程序
 $(BPF_OBJ): xdp_monitor.c
 	@echo "编译 eBPF 程序..."
-	$(CLANG) -O2 -target bpf -c xdp_monitor.c -o $(BPF_OBJ)
+	@if ! command -v $(CLANG) >/dev/null 2>&1; then \
+		echo "❌ clang 未安装，推荐使用 Docker: make docker-up"; \
+		exit 1; \
+	fi
+	@if [ ! -f /usr/include/linux/bpf.h ]; then \
+		echo "❌ 缺少内核头文件，推荐使用 Docker: make docker-up"; \
+		exit 1; \
+	fi
+	$(CLANG) -O2 -target bpf -c xdp_monitor.c -o $(BPF_OBJ) || \
+		(echo "❌ eBPF 编译失败！推荐解决方案:"; \
+		 echo "   1. 使用 Docker（推荐）: make docker-up"; \
+		 echo "   2. 手动安装依赖: make deps"; \
+		 echo "   3. 检查系统信息: make info"; \
+		 exit 1)
 
 # 编译 Go 程序
 $(PROGRAM): $(BPF_OBJ) main.go go.mod
@@ -108,4 +143,91 @@ info: ## 显示系统和依赖信息
 		echo "  内核 BPF 支持: ✓ 已启用"; \
 	else \
 		echo "  内核 BPF 支持: ? 无法确定"; \
+	fi
+
+# ===========================================
+# Docker 相关命令
+# ===========================================
+
+# 构建 Docker 镜像
+docker-build: ## 构建 Docker 镜像
+	@echo "构建 Docker 镜像..."
+	docker build -t $(IMAGE_NAME):$(IMAGE_TAG) .
+	@echo "✅ 镜像构建完成: $(IMAGE_NAME):$(IMAGE_TAG)"
+
+# 直接运行 Docker 容器
+docker-run: docker-build ## 使用 Docker 运行程序
+	@echo "使用 Docker 运行 xtrace-catch (接口: $(INTERFACE))..."
+	@echo "⚠️  需要特权模式和主机网络访问权限"
+	docker run --rm --privileged --network host \
+		-v /sys/fs/bpf:/sys/fs/bpf \
+		-v /proc:/host/proc:ro \
+		-v /sys:/host/sys:ro \
+		-e NETWORK_INTERFACE=$(INTERFACE) \
+		$(IMAGE_NAME):$(IMAGE_TAG) -i $(INTERFACE)
+
+# 使用 docker-compose 启动
+docker-up: ## 使用 docker-compose 启动服务
+	@echo "使用 docker-compose 启动服务 (接口: $(INTERFACE))..."
+	INTERFACE=$(INTERFACE) docker-compose up --build -d
+	@echo "✅ 服务已启动，使用 'make docker-logs' 查看日志"
+
+# 停止 docker-compose 服务
+docker-down: ## 停止 docker-compose 服务
+	@echo "停止服务..."
+	docker-compose down
+	@echo "✅ 服务已停止"
+
+# 查看服务日志
+docker-logs: ## 查看服务日志
+	docker-compose logs -f xtrace-catch
+
+# 显示网络接口信息（调试用）
+docker-network-info: ## 显示主机网络接口信息
+	@echo "获取主机网络接口信息..."
+	docker-compose --profile debug run --rm network-info
+
+# 进入运行中的容器
+docker-shell: ## 进入运行中的容器 shell
+	@echo "进入容器 shell..."
+	@if [ "$$(docker ps -q -f name=xtrace-catch)" ]; then \
+		docker exec -it xtrace-catch bash; \
+	else \
+		echo "❌ 容器未运行，请先执行 'make docker-up'"; \
+		exit 1; \
+	fi
+
+# 清理 Docker 资源
+docker-clean: ## 清理 Docker 镜像和容器
+	@echo "清理 Docker 资源..."
+	-docker-compose down --rmi all --volumes --remove-orphans
+	-docker rmi $(IMAGE_NAME):$(IMAGE_TAG) 2>/dev/null || true
+	@echo "✅ Docker 资源清理完成"
+
+# Docker 快速测试
+docker-test: ## 构建镜像并快速测试
+	@echo "Docker 快速测试..."
+	docker build -t $(IMAGE_NAME):test .
+	@echo "✅ 构建成功，运行测试..."
+	docker run --rm $(IMAGE_NAME):test --help
+	@echo "✅ Docker 测试通过"
+
+# 显示 Docker 相关信息
+docker-info: ## 显示 Docker 环境信息
+	@echo "=== Docker 环境信息 ==="
+	@echo "Docker 版本: $$(docker --version || echo 'Docker 未安装')"
+	@echo "Docker Compose 版本: $$(docker-compose --version || echo 'Docker Compose 未安装')"
+	@echo ""
+	@echo "=== 镜像信息 ==="
+	@if docker images $(IMAGE_NAME) --format "table {{.Repository}}:{{.Tag}}\t{{.Size}}\t{{.CreatedAt}}" 2>/dev/null | tail -n +2 | grep -q .; then \
+		docker images $(IMAGE_NAME) --format "table {{.Repository}}:{{.Tag}}\t{{.Size}}\t{{.CreatedAt}}"; \
+	else \
+		echo "暂无 $(IMAGE_NAME) 镜像，使用 'make docker-build' 构建"; \
+	fi
+	@echo ""
+	@echo "=== 容器状态 ==="
+	@if docker ps -a --filter name=xtrace-catch --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | tail -n +2 | grep -q .; then \
+		docker ps -a --filter name=xtrace-catch --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"; \
+	else \
+		echo "暂无相关容器"; \
 	fi

@@ -1,0 +1,59 @@
+version: '3.8'
+
+services:
+  xtrace-catch:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    image: xtrace-catch:latest
+    container_name: xtrace-catch
+    
+    # eBPF requires privileged mode
+    privileged: true
+    
+    # Use host network stack
+    network_mode: host
+    
+    # Mount required system directories
+    volumes:
+      - /sys/fs/bpf:/sys/fs/bpf      # BPF filesystem
+      - /proc:/host/proc:ro          # Process info (read-only)
+      - /sys:/host/sys:ro            # System info (read-only)
+    
+    # Environment variables
+    environment:
+      - NETWORK_INTERFACE=${INTERFACE:-eth0}
+    
+    # Container labels
+    labels:
+      - "com.xtrace.component=monitor"
+      - "com.xtrace.version=1.0"
+    
+    # Restart policy
+    restart: unless-stopped
+    
+    # Resource limits (optional)
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.5'
+        reservations:
+          memory: 64M
+          cpus: '0.1'
+
+  # Optional: helper service to show network interfaces
+  network-info:
+    image: ubuntu:22.04
+    profiles: ["debug"]  # Only run in debug profile
+    network_mode: host
+    command: >
+      bash -c "
+        apt-get update && apt-get install -y iproute2 &&
+        echo '=== Host Network Interface Info ===' &&
+        ip link show &&
+        echo '' &&
+        echo '=== Recommended Interfaces ===' &&
+        ip link show | grep -E 'state UP|state UNKNOWN' | grep -v 'lo:' | awk '{print \$$2}' | sed 's/:$$//' | head -3
+      "
