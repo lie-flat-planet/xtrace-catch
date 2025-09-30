@@ -361,7 +361,7 @@ make clean        # 清理编译文件
 
 ## 📄 许可证
 
-本项目使用 GPL 许可证，详见 xdp_monitor.c 中的许可证声明。
+本项目使用 GPL v3 许可证，详见 [LICENSE](./LICENSE) 文件。
 
 ---
 

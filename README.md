@@ -366,7 +366,7 @@ Welcome to submit Issues and Pull Requests!
 
 ## 📄 License
 
-This project uses GPL license, see license statement in xdp_monitor.c for details.
+This project uses GPL v3 license, see [LICENSE](./LICENSE) file for details.
 
 ---
 
