@@ -1,212 +1,217 @@
-# XTrace-Catch: eBPF 网络流量监控器
+# XTrace-Catch: eBPF Network Traffic Monitor
 
-这是一个基于 eBPF/XDP 技术的高性能网络流量监控工具，支持以太网和 InfiniBand 协议，用于实时捕获和分析网络数据包。
+A high-performance network traffic monitoring tool based on eBPF/XDP technology, supporting Ethernet and InfiniBand protocols for real-time packet capture and analysis.
 
-## ⚠️ 重要说明
+## 📖 Language Versions
 
-**本项目使用 eBPF 和 XDP 技术，原生支持 Linux 环境。** 
-- **Linux 系统**：可以直接运行，支持内核版本 4.1+
-- **macOS/Windows**：通过 Docker 运行（推荐方式）
+- **English**: [README.md](./README.md) (Current)
+- **中文**: [README_CN.md](./README_CN.md)
 
-## 🖥️ 跨平台支持
+## ⚠️ Important Notice
 
-### Linux 系统
-- ✅ 原生支持，性能最佳
-- ✅ 可以监控真实的主机网络流量
-- ✅ 支持所有网络接口
+**This project uses eBPF and XDP technology, natively supporting Linux environments.**
+- **Linux Systems**: Can run directly, supports kernel version 4.1+
+- **macOS/Windows**: Run through Docker (recommended approach)
 
-### macOS 系统  
-- ✅ 通过 Docker 支持
-- ⚠️ 监控的是 Docker 虚拟网络流量
-- ⚠️ 需要 Docker Desktop
+## 🖥️ Cross-Platform Support
 
-### Windows 系统
-- ✅ 通过 Docker Desktop + WSL2 支持
-- ⚠️ 监控的是 WSL2 虚拟网络流量
+### Linux Systems
+- ✅ Native support, best performance
+- ✅ Can monitor real host network traffic
+- ✅ Supports all network interfaces
 
-## 🛠️ 快速开始
+### macOS Systems
+- ✅ Supported through Docker
+- ⚠️ Monitors Docker virtual network traffic
+- ⚠️ Requires Docker Desktop
 
-### 方法1：使用 Docker（推荐）
+### Windows Systems
+- ✅ Supported through Docker Desktop + WSL2
+- ⚠️ Monitors WSL2 virtual network traffic
 
-**无需安装任何依赖，一键运行：**
+## 🛠️ Quick Start
+
+### Method 1: Using Docker (Recommended)
+
+**No dependencies installation required, one-click run:**
 
 ```bash
-# XDP 模式 - 监控经过网络栈的流量
+# XDP mode - monitor traffic through network stack
 make docker-up-xdp INTERFACE=eth0
 
-# RDMA 模式 - 监控 RDMA 设备统计
+# RDMA mode - monitor RDMA device statistics
 make docker-up-rdma INTERFACE=ibs8f0 DEVICE=mlx5_0
 
-# NCCL 模式 - 监控 RDMA 硬件统计
+# NCCL mode - monitor RDMA hardware statistics
 make docker-up-nccl INTERFACE=ibs8f0 DEVICE=mlx5_0
 
-# 通用方式 - 通过环境变量指定模式
+# General method - specify mode through environment variables
 make docker-up MODE=rdma INTERFACE=ibs8f0 DEVICE=mlx5_0
 
-# 查看运行日志
+# View running logs
 make docker-logs
 
-# 停止服务
+# Stop service
 make docker-down
 ```
 
-### 方法2：本地编译
+### Method 2: Local Compilation
 
-如果你喜欢本地编译（需要安装依赖）：
+If you prefer local compilation (requires dependency installation):
 
 ```bash
-# 安装依赖
+# Install dependencies
 make deps
 
-# 编译程序
+# Compile program
 make build
 
-# 运行程序（需要 root 权限）
+# Run program (requires root privileges)
 sudo make run
 ```
 
-## 🐳 Docker 使用指南
+## 🐳 Docker Usage Guide
 
-### 快速运行
+### Quick Run
 
 ```bash
-# 一键启动（推荐）
+# One-click start (recommended)
 make docker-up
 
-# 查看网络接口信息
+# View network interface information
 make docker-network-info
 
-# 指定特定网络接口
+# Specify specific network interface
 make docker-up INTERFACE=eth1
 
-# 查看实时日志
+# View real-time logs
 make docker-logs
 ```
 
-### Docker 命令详解
+### Docker Commands Reference
 
 ```bash
-# 基础操作
-make docker-build     # 构建镜像
-make docker-run       # 直接运行容器
-make docker-up        # 后台启动服务
-make docker-down      # 停止服务
-make docker-logs      # 查看日志
+# Basic operations
+make docker-build     # Build image
+make docker-run       # Run container directly
+make docker-up        # Start service in background
+make docker-down      # Stop service
+make docker-logs      # View logs
 
-# 调试和维护
-make docker-shell     # 进入容器 Shell
-make docker-info      # 显示 Docker 环境信息
-make docker-test      # 快速测试构建
-make docker-clean     # 清理所有资源
+# Debug and maintenance
+make docker-shell     # Enter container shell
+make docker-info      # Display Docker environment info
+make docker-test      # Quick build test
+make docker-clean     # Clean all resources
 ```
 
-### Docker 优势
+### Docker Advantages
 
-- ✅ **零依赖安装** - 无需安装 eBPF 编译环境
-- ✅ **一致性环境** - 所有依赖都已预装
-- ✅ **避免网络问题** - 镜像包含所有必需组件
-- ✅ **隔离运行** - 不影响主机系统
-- ✅ **快速部署** - 一键启动和停止
+- ✅ **Zero dependency installation** - No need to install eBPF compilation environment
+- ✅ **Consistent environment** - All dependencies pre-installed
+- ✅ **Avoid network issues** - Image contains all required components
+- ✅ **Isolated execution** - No impact on host system
+- ✅ **Quick deployment** - One-click start and stop
 
-### 🍎 在 macOS 上使用
+### 🍎 Using on macOS
 
-**前提条件：** 安装 Docker Desktop
+**Prerequisites:** Install Docker Desktop
 
 ```bash
-# 1. 下载并安装 Docker Desktop
+# 1. Download and install Docker Desktop
 # https://www.docker.com/products/docker-desktop
 
-# 2. 启动 Docker Desktop
+# 2. Start Docker Desktop
 
-# 3. 一键运行（会自动构建并启动）
+# 3. One-click run (will auto-build and start)
 make docker-up
 
-# 4. 查看网络流量监控日志
+# 4. View network traffic monitoring logs
 make docker-logs
 
-# 5. 停止监控
+# 5. Stop monitoring
 make docker-down
 ```
 
-**在 Mac 上测试网络流量：**
+**Testing network traffic on Mac:**
 ```bash
-# 在另一个终端窗口中，进入容器生成一些网络流量
+# In another terminal window, enter container to generate some network traffic
 make docker-shell
 
-# 在容器内执行（生成测试流量）
+# Execute in container (generate test traffic)
 curl -s http://httpbin.org/get > /dev/null
 ping -c 5 8.8.8.8
 wget -q -O /dev/null http://example.com
 ```
 
-**注意事项：**
-- 在 Mac 上会监控 Docker 虚拟机的网络流量
-- 如果想看到更多流量，可以在容器内生成网络活动
-- 性能可能略低于原生 Linux，但足够用于学习和测试
+**Notes:**
+- On Mac, it monitors Docker virtual machine network traffic
+- To see more traffic, you can generate network activity inside the container
+- Performance may be slightly lower than native Linux, but sufficient for learning and testing
 
-## 📋 使用说明
+## 📋 Usage Instructions
 
-### 1. 命令行参数
+### 1. Command Line Parameters
 
 ```bash
-# 显示帮助信息
+# Show help information
 ./xtrace-catch -h
 ./xtrace-catch --help
 
-# 列出所有可用的网络接口
+# List all available network interfaces
 ./xtrace-catch -l
 ./xtrace-catch --list
 
-# XDP 模式 - 监控经过网络栈的流量
+# XDP mode - monitor traffic through network stack
 sudo ./xtrace-catch -m xdp -i eth0
 
-# RDMA 模式 - 监控 RDMA 设备统计
+# RDMA mode - monitor RDMA device statistics
 ./xtrace-catch -m rdma -d mlx5_0 -i ibs8f0
 
-# NCCL 模式 - 监控 RDMA 硬件统计
+# NCCL mode - monitor RDMA hardware statistics
 ./xtrace-catch -m nccl -d mlx5_0 -i ibs8f0
 
-# 使用默认模式运行
+# Run with default mode
 sudo ./xtrace-catch
 ```
 
-### 2. 网络接口配置优先级
+### 2. Network Interface Configuration Priority
 
-程序按以下优先级确定要监控的网络接口：
-1. **命令行参数** - `./xtrace-catch -i eth0`
-2. **环境变量** - `export NETWORK_INTERFACE=eth0`
-3. **默认值** - `eth0`
+The program determines the network interface to monitor in the following priority order:
+1. **Command line parameters** - `./xtrace-catch -i eth0`
+2. **Environment variables** - `export NETWORK_INTERFACE=eth0`
+3. **Default value** - `eth0`
 
-### 3. 使用 Makefile
+### 3. Using Makefile
 
 ```bash
-# 查看所有可用命令
+# View all available commands
 make help
 
-# 使用默认接口运行
+# Run with default interface
 sudo make run
 
-# 指定接口运行
+# Run with specified interface
 sudo make run-with-interface INTERFACE=enp0s3
 
-# 列出网络接口
+# List network interfaces
 make interfaces
 
-# 显示系统信息
+# Display system information
 make info
 ```
 
-### 4. 程序特性
+### 4. Program Features
 
-- 程序会每 5 秒输出一次网络流量统计
-- 按 Ctrl+C 可以安全退出
-- 需要 root 权限来加载 eBPF 程序
-- 自动验证网络接口是否存在
-- 高性能内核级数据包处理
+- Program outputs network traffic statistics every 5 seconds
+- Press Ctrl+C to safely exit
+- Requires root privileges to load eBPF programs
+- Automatically validates network interface existence
+- High-performance kernel-level packet processing
 
-### 5. 输出格式
+### 5. Output Format
 
-**以太网流量：**
+**Ethernet Traffic:**
 ```
 准备监控网络接口: eth0
 XDP program loaded on eth0
@@ -214,151 +219,158 @@ XDP program loaded on eth0
 10.0.0.1:443 -> 10.0.0.5:45678 proto=6 packets=5 bytes=800
 ```
 
-**InfiniBand 流量：**
+**InfiniBand Traffic:**
 ```
 准备监控网络接口: ibs8f0
 XDP program loaded on ibs8f0
 194:0 -> 193:0 proto=8 packets=1000 bytes=65536000
 ```
 
-**输出说明：**
-- **以太网流量**：`proto=6` 表示 TCP 协议，`proto=17` 表示 UDP 协议
-- **InfiniBand 流量**：`194:0` 表示源 QPN:LID，`proto=8` 表示 RDMA_WRITE opcode
-- `packets` 为数据包数量，`bytes` 为总字节数
+**Output Description:**
+- **Ethernet traffic**: `proto=6` indicates TCP protocol, `proto=17` indicates UDP protocol
+- **InfiniBand traffic**: `194:0` indicates source QPN:LID, `proto=8` indicates RDMA_WRITE opcode
+- `packets` is packet count, `bytes` is total byte count
 
-## 🔧 常见问题
+## 🔧 Frequently Asked Questions
 
-### Q1: 权限不足错误？
-A: eBPF 需要 root 权限，请使用 `sudo` 运行程序。
+### Q1: Permission denied error?
+A: eBPF requires root privileges, please run the program with `sudo`.
 
-### Q2: 找不到网络接口？
-A: 使用 `./xtrace-catch -l` 查看可用接口，或 `ip link show` 命令查看系统网络接口。
+### Q2: Network interface not found?
+A: Use `./xtrace-catch -l` to view available interfaces, or `ip link show` command to view system network interfaces.
 
-### Q3: 编译失败，找不到头文件？
-A: 确保安装了内核头文件：`sudo apt-get install linux-headers-$(uname -r)`
+### Q3: Compilation failed, header files not found?
+A: Ensure kernel headers are installed: `sudo apt-get install linux-headers-$(uname -r)`
 
-### Q4: eBPF 程序加载失败？
-A: 检查内核版本是否支持 eBPF，通常需要内核版本 >= 4.1。使用 `make info` 查看系统信息。
+### Q4: eBPF program loading failed?
+A: Check if kernel version supports eBPF, usually requires kernel version >= 4.1. Use `make info` to view system information.
 
-### Q5: 在虚拟机中看不到网络流量？
-A: 确保虚拟机的网络模式允许监控流量，桥接模式通常效果更好。
+### Q5: No network traffic visible in virtual machine?
+A: Ensure virtual machine network mode allows traffic monitoring, bridge mode usually works better.
 
-### Q6: 如何监控 InfiniBand 流量？
-A: 使用 `ibdev2netdev` 命令查看 InfiniBand 设备对应的网络接口，然后使用该接口启动监控：
+### Q6: How to monitor InfiniBand traffic?
+A: Use `ibdev2netdev` command to view InfiniBand device corresponding network interfaces, then use that interface to start monitoring:
 ```bash
-# 查看 InfiniBand 设备映射
+# View InfiniBand device mapping
 ibdev2netdev
 
-# 使用对应的网络接口启动监控
+# Start monitoring with corresponding network interface
 make docker-up INTERFACE=ibs8f0
 ```
 
-### Q7: RDMA 测试没有流量输出？
-A: 确保：
-1. 使用正确的 InfiniBand 网络接口
-2. RDMA 设备状态正常
-3. 网络接口处于 UP 状态
+### Q7: RDMA test has no traffic output?
+A: Ensure:
+1. Using correct InfiniBand network interface
+2. RDMA device status is normal
+3. Network interface is in UP state
 
-### Q8: 为什么原生 InfiniBand 流量检测不到？
-A: 这是 InfiniBand 设计的必然结果。原生 InfiniBand 使用硬件直通技术，数据包直接在用户空间和硬件之间传输，完全绕过内核网络栈，因此 XDP 程序无法检测到。
+### Q8: Why can't native InfiniBand traffic be detected?
+A: This is an inevitable result of InfiniBand design. Native InfiniBand uses hardware passthrough technology, where packets are transmitted directly between user space and hardware, completely bypassing the kernel network stack, so XDP programs cannot detect them.
 
-**监控层级对比：**
-- **NCCL 等 RDMA 工具**：在收费站（应用层）统计所有通过的车辆
-- **XDP 程序**：在某个路段（网络栈）统计，但有些车辆走的是专用通道（硬件直通）
+**Monitoring Level Comparison:**
+- **NCCL and other RDMA tools**: Count all passing vehicles at toll stations (application layer)
+- **XDP programs**: Count at certain road sections (network stack), but some vehicles use dedicated lanes (hardware passthrough)
 
-**解决方案：**
-1. 使用专门的 RDMA 监控工具（如 `ibstat`、`ibv_devinfo`）
-2. 配置 RoCE 模式，让 RDMA 流量经过以太网栈
-3. 使用应用层统计（如 NCCL 内置的统计功能）
+**Solutions:**
+1. Use specialized RDMA monitoring tools (like `ibstat`, `ibv_devinfo`)
+2. Configure RoCE mode to route RDMA traffic through Ethernet stack
+3. Use application layer statistics (like NCCL built-in statistics)
 
-## 📁 项目结构
+## 📁 Project Structure
 
 ```
 .
-├── main.go              # Go 主程序
-├── xdp_monitor.c        # eBPF C 程序
-├── go.mod              # Go 模块定义
-├── go.sum              # Go 依赖校验
-├── Dockerfile          # Docker 镜像构建文件
-├── docker-compose.yml  # Docker Compose 配置
-├── .dockerignore       # Docker 忽略文件
-├── Makefile           # 编译脚本（支持 Docker）
-├── .gitignore         # Git 忽略文件
-└── README.md          # 项目说明
+├── main.go              # Go main program
+├── xdp_monitor.c        # eBPF C program
+├── go.mod              # Go module definition
+├── go.sum              # Go dependency checksum
+├── Dockerfile          # Docker image build file
+├── docker-compose.yml  # Docker Compose configuration
+├── .dockerignore       # Docker ignore file
+├── Makefile           # Compilation script (supports Docker)
+├── .gitignore         # Git ignore file
+└── README.md          # Project documentation
 ```
 
-## 🛡️ 安全考虑
+## 🛡️ Security Considerations
 
-- 本程序需要 root 权限运行
-- eBPF 程序会监控所有网络流量，请确保在合适的环境中使用
-- 在生产环境中使用前，请充分测试
-- 建议在隔离的测试环境中运行
+- This program requires root privileges to run
+- eBPF programs will monitor all network traffic, please ensure use in appropriate environments
+- Please fully test before using in production environments
+- Recommend running in isolated test environments
 
-## 📚 技术栈
+## 📚 Technology Stack
 
-- **Go 1.24**: 主程序语言
-- **eBPF**: 内核级数据包处理
-- **XDP**: 高性能网络数据路径
-- **Clang/LLVM**: eBPF 程序编译器
-- **InfiniBand**: 支持 RDMA 协议监控（有限支持）
-- **Docker**: 跨平台部署支持
+- **Go 1.24**: Main program language
+- **eBPF**: Kernel-level packet processing
+- **XDP**: High-performance network data path
+- **Clang/LLVM**: eBPF program compiler
+- **InfiniBand**: RDMA protocol monitoring support (limited support)
+- **Docker**: Cross-platform deployment support
 
-### 🔍 监控能力说明
+### 🔍 Monitoring Capability Description
 
-**本工具可以监控：**
-- ✅ 以太网流量（TCP/UDP）
-- ✅ RoCE 流量（如果经过内核网络栈）
-- ✅ 封装在以太网中的 InfiniBand 流量
+**This tool can monitor:**
+- ✅ Ethernet traffic (TCP/UDP)
+- ✅ RoCE traffic (if passing through kernel network stack)
+- ✅ InfiniBand traffic encapsulated in Ethernet
 
-**本工具无法监控：**
-- ❌ 原生 InfiniBand 硬件直通流量
-- ❌ 绕过内核的 RDMA 流量
-- ❌ 直接在硬件层面处理的流量
+**This tool cannot monitor:**
+- ❌ Native InfiniBand hardware passthrough traffic
+- ❌ RDMA traffic bypassing kernel
+- ❌ Traffic processed directly at hardware level
 
-**为什么有这些限制？**
-- **XDP 工作在内核网络栈**：只能看到经过网络栈的数据包
-- **InfiniBand 设计目标**：为了追求最低延迟，数据包直接通过硬件处理
-- **监控层级差异**：应用层工具（如 NCCL）可以直接访问硬件统计，而内核层工具（如 XDP）受限于网络栈
+**Why these limitations?**
+- **XDP works in kernel network stack**: Can only see packets passing through network stack
+- **InfiniBand design goal**: To pursue lowest latency, packets are processed directly by hardware
+- **Monitoring level difference**: Application layer tools (like NCCL) can directly access hardware statistics, while kernel layer tools (like XDP) are limited by network stack
 
-## 🚀 Makefile 命令参考
+## 🚀 Makefile Command Reference
 
 ```bash
-# Docker 操作（推荐）
-make docker-up       # 启动 Docker 服务
-make docker-up-xdp   # 启动 XDP 监控模式
-make docker-up-rdma  # 启动 RDMA 监控模式
-make docker-up-nccl  # 启动 NCCL 监控模式
-make docker-down     # 停止 Docker 服务
-make docker-logs     # 查看运行日志
-make docker-build    # 构建镜像
-make docker-shell    # 进入容器 shell
-make docker-clean    # 清理 Docker 资源
+# Docker operations (recommended)
+make docker-up       # Start Docker service
+make docker-up-xdp   # Start XDP monitoring mode
+make docker-up-rdma  # Start RDMA monitoring mode
+make docker-up-nccl  # Start NCCL monitoring mode
+make docker-down     # Stop Docker service
+make docker-logs     # View running logs
+make docker-build    # Build image
+make docker-shell    # Enter container shell
+make docker-clean    # Clean Docker resources
 
-# 本地编译
-make deps         # 安装编译依赖
-make build        # 编译程序
-sudo make run                              # 使用默认接口
-sudo make run-with-interface INTERFACE=eth0  # 指定接口
+# Local compilation
+make deps         # Install compilation dependencies
+make build        # Compile program
+sudo make run                              # Use default interface
+sudo make run-with-interface INTERFACE=eth0  # Specify interface
 
-# 辅助命令
-make help         # 显示帮助信息
-make interfaces   # 显示可用网络接口
-make info         # 显示系统信息
-make clean        # 清理编译文件
+# Helper commands
+make help         # Show help information
+make interfaces   # Show available network interfaces
+make info         # Show system information
+make clean        # Clean compilation files
 ```
 
-## 🚀 性能特性
+## 🚀 Performance Features
 
-- **零拷贝处理** - 直接在网卡 DMA 缓冲区处理数据包
-- **内核空间执行** - 避免用户态/内核态切换开销
-- **XDP 早期拦截** - 在网络栈最早期处理，性能最高
-- **原子操作统计** - 多核安全的统计更新
-- **高效哈希表** - 支持同时监控 10240 个网络流
+- **Zero-copy processing** - Process packets directly in network card DMA buffer
+- **Kernel space execution** - Avoid user/kernel space switching overhead
+- **XDP early interception** - Process at earliest network stack stage, highest performance
+- **Atomic operation statistics** - Multi-core safe statistics updates
+- **Efficient hash table** - Supports monitoring 10240 network flows simultaneously
 
-## 🤝 贡献
+## 🤝 Contributing
 
-欢迎提交 Issue 和 Pull Request！
+Welcome to submit Issues and Pull Requests!
 
-## 📄 许可证
+## 📄 License
 
-本项目使用 GPL 许可证，详见 xdp_monitor.c 中的许可证声明。
+This project uses GPL license, see license statement in xdp_monitor.c for details.
+
+---
+
+## 📖 Language Versions
+
+- **English**: [README_EN.md](./README_EN.md) (Current)
+- **中文**: [README.md](./README.md)
