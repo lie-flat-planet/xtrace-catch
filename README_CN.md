@@ -100,6 +100,42 @@ make docker-test      # 快速测试构建
 make docker-clean     # 清理所有资源
 ```
 
+### 直接 Docker 命令
+
+对于喜欢直接使用 Docker 命令的高级用户：
+
+```bash
+# 使用直接 Docker 命令运行（生产环境就绪）
+sudo docker run -d \
+  --name xtrace-catch \
+  --privileged \
+  --network host \
+  --restart unless-stopped \
+  -v /sys/fs/bpf:/sys/fs/bpf:rw \
+  -v /proc:/host/proc:ro \
+  -v /sys:/host/sys:ro \
+  -e NETWORK_INTERFACE=ens7f0 \
+  xtrace-catch:latest
+
+# 查看日志
+docker logs -f xtrace-catch
+
+# 停止容器
+docker stop xtrace-catch
+
+# 删除容器
+docker rm xtrace-catch
+```
+
+**命令参数说明：**
+- `--privileged`: eBPF 程序加载所需
+- `--network host`: 使用主机网络进行流量监控
+- `--restart unless-stopped`: 系统重启时自动重启
+- `-v /sys/fs/bpf:/sys/fs/bpf:rw`: 挂载 eBPF 文件系统
+- `-v /proc:/host/proc:ro`: 只读访问进程信息
+- `-v /sys:/host/sys:ro`: 只读访问系统信息
+- `-e NETWORK_INTERFACE=ens7f0`: 指定要监控的网络接口
+
 ### Docker 优势
 
 - ✅ **零依赖安装** - 无需安装 eBPF 编译环境

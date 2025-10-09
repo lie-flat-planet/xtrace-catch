@@ -105,6 +105,42 @@ make docker-test      # Quick build test
 make docker-clean     # Clean all resources
 ```
 
+### Direct Docker Command
+
+For advanced users who prefer direct Docker commands:
+
+```bash
+# Run with direct Docker command (production-ready)
+sudo docker run -d \
+  --name xtrace-catch \
+  --privileged \
+  --network host \
+  --restart unless-stopped \
+  -v /sys/fs/bpf:/sys/fs/bpf:rw \
+  -v /proc:/host/proc:ro \
+  -v /sys:/host/sys:ro \
+  -e NETWORK_INTERFACE=ens7f0 \
+  xtrace-catch:latest
+
+# View logs
+docker logs -f xtrace-catch
+
+# Stop container
+docker stop xtrace-catch
+
+# Remove container
+docker rm xtrace-catch
+```
+
+**Command Parameters Explanation:**
+- `--privileged`: Required for eBPF program loading
+- `--network host`: Use host network for traffic monitoring
+- `--restart unless-stopped`: Auto-restart on system reboot
+- `-v /sys/fs/bpf:/sys/fs/bpf:rw`: Mount eBPF filesystem
+- `-v /proc:/host/proc:ro`: Read-only access to process information
+- `-v /sys:/host/sys:ro`: Read-only access to system information
+- `-e NETWORK_INTERFACE=ens7f0`: Specify network interface to monitor
+
 ### Docker Advantages
 
 - ✅ **Zero dependency installation** - No need to install eBPF compilation environment
