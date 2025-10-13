@@ -8,6 +8,9 @@
 #include <linux/udp.h>
 #include <linux/in.h>
 
+// RoCE v2 使用的 UDP 端口
+#define ROCE_V2_PORT 4791
+
 struct flow_key {
     __u32 src_ip;
     __u32 dst_ip;
@@ -56,6 +59,14 @@ int xdp_monitor(struct xdp_md *ctx) {
                 return XDP_PASS;
             key.src_port = tcp->source;
             key.dst_port = tcp->dest;
+            
+            // 检测 RoCE v2 流量 (UDP port 4791)
+            if (ip->protocol == IPPROTO_UDP && 
+                (__builtin_bswap16(key.dst_port) == ROCE_V2_PORT || 
+                 __builtin_bswap16(key.src_port) == ROCE_V2_PORT)) {
+                // 标记为 RoCE v2 流量
+                key.proto = 0xFE; // 使用特殊标记表示 RoCE v2
+            }
         }
 
         struct flow_stats *val = bpf_map_lookup_elem(&flows, &key);
@@ -67,13 +78,13 @@ int xdp_monitor(struct xdp_md *ctx) {
             __sync_fetch_and_add(&val->bytes, data_end - data);
         }
     }
-    // 处理 InfiniBand 相关协议
-    else if (eth->h_proto == __constant_htons(0x8915) ||  // ETH_P_IB
-             eth->h_proto == __constant_htons(0x8914)) {  // ETH_P_IB_IP
-        // InfiniBand/RDMA 数据包处理
+    // 处理 InfiniBand 和 RoCE v1 协议
+    else if (eth->h_proto == __constant_htons(0x8915) ||  // ETH_P_IBOE (RoCE v1)
+             eth->h_proto == __constant_htons(0x8914)) {  // ETH_P_IB
+        // InfiniBand/RoCE v1/RDMA 数据包处理
         struct flow_key key = {};
-        key.src_ip = 0x01000000;  // 标记为 InfiniBand 流量
-        key.dst_ip = 0x02000000;  // 标记为 InfiniBand 流量
+        key.src_ip = 0x01000000;  // 标记为 InfiniBand/RoCE 流量
+        key.dst_ip = 0x02000000;  // 标记为 InfiniBand/RoCE 流量
         key.proto = eth->h_proto; // 使用实际的协议类型
         key.src_port = 0;
         key.dst_port = 0;

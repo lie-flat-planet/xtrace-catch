@@ -48,6 +48,7 @@ func main() {
 	var listInterfaces bool
 	var monitorMode string
 	var rdmaDevice string
+	var filterTraffic string
 
 	flag.StringVar(&iface, "i", "", "网络接口名称 (例如: eth0, enp0s3)")
 	flag.StringVar(&iface, "interface", "", "网络接口名称 (例如: eth0, enp0s3)")
@@ -55,6 +56,8 @@ func main() {
 	flag.StringVar(&monitorMode, "mode", "xdp", "监控模式: xdp, rdma, nccl")
 	flag.StringVar(&rdmaDevice, "d", "mlx5_0", "RDMA 设备名称 (用于 rdma/nccl 模式)")
 	flag.StringVar(&rdmaDevice, "device", "mlx5_0", "RDMA 设备名称 (用于 rdma/nccl 模式)")
+	flag.StringVar(&filterTraffic, "f", "", "过滤流量类型: roce, roce_v1, roce_v2, tcp, udp, ib, all")
+	flag.StringVar(&filterTraffic, "filter", "", "过滤流量类型: roce, roce_v1, roce_v2, tcp, udp, ib, all")
 	flag.BoolVar(&showHelp, "h", false, "显示帮助信息")
 	flag.BoolVar(&showHelp, "help", false, "显示帮助信息")
 	flag.BoolVar(&listInterfaces, "l", false, "列出所有可用的网络接口")
@@ -69,11 +72,21 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  xdp  - eBPF/XDP 模式 (默认，监控经过网络栈的流量)\n")
 		fmt.Fprintf(os.Stderr, "  rdma - RDMA 模式 (监控 RDMA 设备统计)\n")
 		fmt.Fprintf(os.Stderr, "  nccl - NCCL 模式 (监控 RDMA 硬件统计)\n")
+		fmt.Fprintf(os.Stderr, "\n流量过滤:\n")
+		fmt.Fprintf(os.Stderr, "  roce       - 所有 RoCE 流量 (v1 + v2)\n")
+		fmt.Fprintf(os.Stderr, "  roce_v1    - 仅 RoCE v1/IBoE 流量\n")
+		fmt.Fprintf(os.Stderr, "  roce_v2    - 仅 RoCE v2 流量\n")
+		fmt.Fprintf(os.Stderr, "  tcp        - 仅 TCP 流量\n")
+		fmt.Fprintf(os.Stderr, "  udp        - 仅 UDP 流量\n")
+		fmt.Fprintf(os.Stderr, "  ib         - 仅 InfiniBand 流量\n")
+		fmt.Fprintf(os.Stderr, "  all        - 所有流量 (默认)\n")
 		fmt.Fprintf(os.Stderr, "\n示例:\n")
-		fmt.Fprintf(os.Stderr, "  %s -m xdp -i eth0        # XDP 模式监控 eth0 接口\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  %s -m rdma -d mlx5_0     # RDMA 模式监控 mlx5_0 设备\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  %s -m nccl -d mlx5_0     # NCCL 模式监控 mlx5_0 设备\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  %s --list                 # 列出所有网络接口\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -m xdp -i eth0                  # XDP 模式监控 eth0 接口\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -m xdp -i ibs8f0 -f roce        # 仅显示 RoCE 流量\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -m xdp -i ibs8f0 -f roce_v2     # 仅显示 RoCE v2 流量\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -m rdma -d mlx5_0               # RDMA 模式监控 mlx5_0 设备\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -m nccl -d mlx5_0               # NCCL 模式监控 mlx5_0 设备\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s --list                           # 列出所有网络接口\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "\n环境变量:\n")
 		fmt.Fprintf(os.Stderr, "  NETWORK_INTERFACE  设置默认网络接口\n")
 		fmt.Fprintf(os.Stderr, "  MONITOR_MODE       设置默认监控模式\n")
@@ -124,7 +137,7 @@ func main() {
 	// 根据监控模式启动相应的监控程序
 	switch monitorMode {
 	case "xdp":
-		startXDPMonitor(iface)
+		startXDPMonitor(iface, filterTraffic)
 	case "rdma":
 		startRDMAMonitor(rdmaDevice, iface)
 	case "nccl":
@@ -134,9 +147,48 @@ func main() {
 	}
 }
 
+// 检查是否应该显示该流量
+func shouldDisplayTraffic(proto uint8, srcPort, dstPort uint16, filter string) bool {
+	if filter == "" || filter == "all" {
+		return true
+	}
+
+	// 端口号在 eBPF 中是网络字节序（大端），需要转换
+	// 4791 的大端字节序是 0xb712 (十进制 46866)
+	rocePort := uint16(0xb712) // 4791 in network byte order
+
+	// 判断流量类型
+	isRoCEv2 := proto == 0xFE || (proto == 17 && (srcPort == rocePort || dstPort == rocePort))
+	isRoCEv1 := proto == 0x15 // 0x8915 的低字节
+	isIB := proto == 0x14     // 0x8914 的低字节
+	isTCP := proto == 6
+	isUDP := proto == 17
+
+	switch filter {
+	case "roce":
+		return isRoCEv2 || isRoCEv1
+	case "roce_v1":
+		return isRoCEv1
+	case "roce_v2":
+		return isRoCEv2
+	case "tcp":
+		return isTCP
+	case "udp":
+		return isUDP
+	case "ib":
+		return isIB
+	default:
+		return true
+	}
+}
+
 // XDP 监控模式
-func startXDPMonitor(iface string) {
-	log.Printf("启动 XDP 监控模式，网络接口: %s", iface)
+func startXDPMonitor(iface string, filter string) {
+	filterMsg := ""
+	if filter != "" && filter != "all" {
+		filterMsg = fmt.Sprintf("，过滤: %s", filter)
+	}
+	log.Printf("启动 XDP 监控模式，网络接口: %s%s", iface, filterMsg)
 
 	spec, err := ebpf.LoadCollectionSpec("xdp_monitor.o")
 	if err != nil {
@@ -179,10 +231,43 @@ loop:
 			var k FlowKey
 			var v FlowStats
 			for iter.Next(&k, &v) {
-				fmt.Printf("%s:%d -> %s:%d proto=%d packets=%d bytes=%d\n",
-					ipToStr(k.SrcIP), k.SrcPort,
-					ipToStr(k.DstIP), k.DstPort,
-					k.Proto, v.Packets, v.Bytes)
+				// 检查是否应该显示该流量
+				if !shouldDisplayTraffic(k.Proto, k.SrcPort, k.DstPort, filter) {
+					continue
+				}
+
+				// 识别流量类型
+				rocePort := uint16(0xb712) // 4791 in network byte order
+				trafficType := ""
+				switch k.Proto {
+				case 0xFE:
+					trafficType = " [RoCE v2]"
+				case 6:
+					trafficType = " [TCP]"
+				case 17:
+					// 检查是否是 RoCE v2 (UDP port 4791)
+					if k.SrcPort == rocePort || k.DstPort == rocePort {
+						trafficType = " [RoCE v2/UDP]"
+					} else {
+						trafficType = " [UDP]"
+					}
+				default:
+					// 对于大于 255 的协议值，可能是以太网协议类型
+					if k.Proto == 0x15 { // 0x8915 的低字节
+						trafficType = " [RoCE v1/IBoE]"
+					} else if k.Proto == 0x14 { // 0x8914 的低字节
+						trafficType = " [InfiniBand]"
+					}
+				}
+
+				// 端口号需要从网络字节序转换回主机字节序来显示
+				srcPort := binary.BigEndian.Uint16([]byte{byte(k.SrcPort >> 8), byte(k.SrcPort)})
+				dstPort := binary.BigEndian.Uint16([]byte{byte(k.DstPort >> 8), byte(k.DstPort)})
+
+				fmt.Printf("%s:%d -> %s:%d proto=%d%s packets=%d bytes=%d\n",
+					ipToStr(k.SrcIP), srcPort,
+					ipToStr(k.DstIP), dstPort,
+					k.Proto, trafficType, v.Packets, v.Bytes)
 			}
 			if err := iter.Err(); err != nil {
 				log.Printf("iter error: %v", err)

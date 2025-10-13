@@ -1,6 +1,11 @@
 # 多阶段构建 Dockerfile for eBPF 网络流量监控器
 FROM golang:1.24-bullseye AS builder
 
+# 版本信息
+ARG VERSION=unknown
+LABEL version="${VERSION}"
+LABEL description="XTrace-Catch: 多模式网络流量监控器"
+
 # 避免交互式安装
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=Asia/Shanghai
@@ -57,9 +62,16 @@ RUN ls -la xtrace-catch xdp_monitor.o
 # 运行时镜像 - 使用更小的 Ubuntu
 FROM ubuntu:22.04 AS runtime
 
+# 版本信息
+ARG VERSION=unknown
+LABEL version="${VERSION}"
+LABEL description="XTrace-Catch: 多模式网络流量监控器"
+LABEL maintainer="XTrace-Catch Team"
+
 # 避免交互式安装
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=Asia/Shanghai
+ENV VERSION=${VERSION}
 
 # 只安装运行时必需的依赖
 RUN apt-get update && apt-get install -y \

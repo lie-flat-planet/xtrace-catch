@@ -114,8 +114,9 @@ sudo docker run -d \
   -v /sys/fs/bpf:/sys/fs/bpf:rw \
   -v /proc:/host/proc:ro \
   -v /sys:/host/sys:ro \
-  -e NETWORK_INTERFACE=ens7f0 \
-  xtrace-catch:latest
+  -e NETWORK_INTERFACE=ens8f1np1 \
+  -e MONITOR_MODE=xdp \
+  xtrace-catch:latest -m xdp -i ens8f1np1
 
 # 查看日志
 docker logs -f xtrace-catch
@@ -127,14 +128,73 @@ docker stop xtrace-catch
 docker rm xtrace-catch
 ```
 
+### RoCE (RDMA over Converged Ethernet) 流量监控
+
+本工具支持监控 RoCE 流量，包括：
+- **RoCE v1 (IBoE)**：以太网协议类型 `0x8915`
+- **RoCE v2**：UDP 协议，端口 `4791`
+
+输出示例：
+```
+192.168.0.84:4791 -> 192.168.0.85:4791 proto=254 [RoCE v2] packets=1500 bytes=2048000
+1.0.0.0:0 -> 2.0.0.0:0 proto=21 [RoCE v1/IBoE] packets=2500 bytes=3072000
+```
+
+### 针对 NCCL 环境的配置示例
+
+如果你的环境运行 NCCL 并使用 `ens8f1np1` 接口，使用以下配置：
+
+```bash
+# 针对 NCCL 环境的 XDP 监控（后台运行）
+sudo docker run -d \
+  --name xtrace-catch-nccl \
+  --privileged \
+  --network host \
+  --restart unless-stopped \
+  -v /sys/fs/bpf:/sys/fs/bpf:rw \
+  -v /proc:/host/proc:ro \
+  -v /sys:/host/sys:ro \
+  -e NETWORK_INTERFACE=ens8f1np1 \
+  -e MONITOR_MODE=xdp \
+  xtrace-catch:latest -m xdp -i ens8f1np1
+
+# 一次性运行（跑完就结束，自动删除容器）
+sudo docker run --rm \
+  --privileged \
+  --network host \
+  -v /sys/fs/bpf:/sys/fs/bpf:rw \
+  -v /proc:/host/proc:ro \
+  -v /sys:/host/sys:ro \
+  -e NETWORK_INTERFACE=ens8f1np1 \
+  -e MONITOR_MODE=xdp \
+  xtrace-catch:latest -m xdp -i ens8f1np1
+
+# 或者使用 docker-compose（推荐）
+make docker-up-xdp INTERFACE=ens8f1np1
+```
+
 **命令参数说明：**
+
+**后台运行模式（-d）：**
 - `--privileged`: eBPF 程序加载所需
 - `--network host`: 使用主机网络进行流量监控
 - `--restart unless-stopped`: 系统重启时自动重启
+- `--name`: 指定容器名称
+- `-d`: 后台运行
+
+**一次性运行模式（--rm）：**
+- `--rm`: 容器停止后自动删除，不保留容器
+- `--privileged`: eBPF 程序加载所需
+- `--network host`: 使用主机网络进行流量监控
+- 不包含 `-d`、`--name`、`--restart` 参数
+
+**通用参数：**
 - `-v /sys/fs/bpf:/sys/fs/bpf:rw`: 挂载 eBPF 文件系统
 - `-v /proc:/host/proc:ro`: 只读访问进程信息
 - `-v /sys:/host/sys:ro`: 只读访问系统信息
-- `-e NETWORK_INTERFACE=ens7f0`: 指定要监控的网络接口
+- `-e NETWORK_INTERFACE=ens8f1np1`: 指定要监控的网络接口（根据你的 NCCL 配置）
+- `-e MONITOR_MODE=xdp`: 指定监控模式为 XDP
+- `-m xdp -i ens8f1np1`: 命令行参数，指定 XDP 模式和网络接口
 
 ### Docker 优势
 
