@@ -12,8 +12,8 @@ ENV TZ=Asia/Shanghai
 ENV CGO_ENABLED=0
 
 # 安装 eBPF 编译依赖
-RUN apt-get update && apt-get install -y \
-    # eBPF 编译工具
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
     clang \
     llvm \
     libbpf-dev \
