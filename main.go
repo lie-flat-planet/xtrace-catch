@@ -20,12 +20,13 @@ import (
 )
 
 type FlowKey struct {
-	SrcIP   uint32
-	DstIP   uint32
-	SrcPort uint16
-	DstPort uint16
-	Proto   uint8
-	Pad     [3]byte // alignment padding
+	SrcIP     uint32
+	DstIP     uint32
+	SrcPort   uint16
+	DstPort   uint16
+	Proto     uint8
+	PktLenLow uint8  // 包长度低8位
+	FirstU16  uint16 // 前2个字节
 }
 
 type FlowStats struct {
@@ -264,10 +265,21 @@ loop:
 				srcPort := binary.BigEndian.Uint16([]byte{byte(k.SrcPort >> 8), byte(k.SrcPort)})
 				dstPort := binary.BigEndian.Uint16([]byte{byte(k.DstPort >> 8), byte(k.DstPort)})
 
-				fmt.Printf("%s:%d -> %s:%d proto=%d%s packets=%d bytes=%d\n",
+				// 显示调试信息
+				debugInfo := ""
+				if k.SrcIP == 0 && k.DstIP == 0 {
+					avgLen := uint64(0)
+					if v.Packets > 0 {
+						avgLen = v.Bytes / v.Packets
+					}
+					debugInfo = fmt.Sprintf(" [first_u16: 0x%04x, pkt_len: %d, avg: %d]",
+						k.FirstU16, k.PktLenLow, avgLen)
+				}
+
+				fmt.Printf("%s:%d -> %s:%d proto=%d%s%s packets=%d bytes=%d\n",
 					ipToStr(k.SrcIP), srcPort,
 					ipToStr(k.DstIP), dstPort,
-					k.Proto, trafficType, v.Packets, v.Bytes)
+					k.Proto, trafficType, debugInfo, v.Packets, v.Bytes)
 			}
 			if err := iter.Err(); err != nil {
 				log.Printf("iter error: %v", err)

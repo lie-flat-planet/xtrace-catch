@@ -23,6 +23,8 @@ struct flow_key {
     __u16 src_port;
     __u16 dst_port;
     __u8  proto;
+    __u8  pkt_len_low;  // 包长度低8位
+    __u16 first_u16;    // 前2个字节（可能是类型/长度）
 };
 
 struct flow_stats {
@@ -42,35 +44,29 @@ int xdp_monitor(struct xdp_md *ctx) {
     void *data_end = (void *)(long)ctx->data_end;
     void *data = (void *)(long)ctx->data;
     struct iphdr *ip = 0;
-    int ip_offset = 0;
 
-    // 方法1: 尝试 IPoIB (4 字节硬件头)
-    if (data + IPOIB_HEADER_LEN + sizeof(struct iphdr) <= data_end) {
-        struct iphdr *test_ip = data + IPOIB_HEADER_LEN;
-        if (test_ip->version == 4) {
-            ip_offset = IPOIB_HEADER_LEN;
-            ip = test_ip;
-            goto parse_ip;
-        }
-    }
-
-    // 方法2: 尝试标准以太网头部
-    if (data + sizeof(struct ethhdr) <= data_end) {
-        struct ethhdr *eth = data;
-        if (eth->h_proto == __constant_htons(ETH_P_IP)) {
-            ip_offset = sizeof(struct ethhdr);
-            ip = data + ip_offset;
-            goto parse_ip;
-        }
-    }
-    
-    // 方法3: 尝试 SLL 格式（某些 IPoIB）
-    if (data + SLL_HDR_LEN + sizeof(struct iphdr) <= data_end) {
-        struct iphdr *test_ip = data + SLL_HDR_LEN;
-        if (test_ip->version == 4) {
-            ip_offset = SLL_HDR_LEN;
-            ip = test_ip;
-            goto parse_ip;
+    // 扫描前64字节寻找 IPv4 头（0x45 开头）
+    // IPoIB 的头部大小不固定，需要动态查找
+    #pragma unroll
+    for (int offset = 0; offset < 64; offset += 2) {
+        if (data + offset + sizeof(struct iphdr) <= data_end) {
+            struct iphdr *test_ip = data + offset;
+            unsigned char version_ihl = *(unsigned char *)test_ip;
+            unsigned char version = version_ihl >> 4;
+            unsigned char ihl = version_ihl & 0x0F;
+            
+            // 检查是否是有效的 IPv4 头
+            if (version == 4 && ihl >= 5 && ihl <= 15) {
+                // 进一步验证：检查总长度字段是否合理
+                __u16 tot_len = __builtin_bswap16(test_ip->tot_len);
+                __u32 pkt_len = data_end - data;
+                
+                // 总长度应该 <= 包长度，且 >= IP 头最小长度
+                if (tot_len >= 20 && tot_len <= pkt_len && test_ip->protocol > 0) {
+                    ip = test_ip;
+                    goto parse_ip;
+                }
+            }
         }
     }
     
@@ -117,48 +113,29 @@ parse_ip:
     }
 
 handle_other:
-    // 处理 InfiniBand 和 RoCE v1 协议
-    if (data + sizeof(struct ethhdr) <= data_end) {
-        struct ethhdr *eth = data;
-        if (eth->h_proto == __constant_htons(0x8915) ||  // ETH_P_IBOE (RoCE v1)
-            eth->h_proto == __constant_htons(0x8914)) {  // ETH_P_IB
-            // InfiniBand/RoCE v1/RDMA 数据包处理
-            struct flow_key key = {};
-            key.src_ip = 0x01000000;  // 标记为 InfiniBand/RoCE 流量
-            key.dst_ip = 0x02000000;  // 标记为 InfiniBand/RoCE 流量
-            key.proto = eth->h_proto; // 使用实际的协议类型
-            key.src_port = 0;
-            key.dst_port = 0;
-
-            struct flow_stats *val = bpf_map_lookup_elem(&flows, &key);
-            if (!val) {
-                struct flow_stats init = {1, data_end - data};
-                bpf_map_update_elem(&flows, &key, &init, BPF_ANY);
-            } else {
-                __sync_fetch_and_add(&val->packets, 1);
-                __sync_fetch_and_add(&val->bytes, data_end - data);
-            }
-            return XDP_PASS;
+    // 记录无法解析的包（用于调试）
+    {
+        struct flow_key key = {};
+        key.src_ip = 0x00000000;
+        key.dst_ip = 0x00000000;
+        key.proto = 0;
+        key.src_port = 0;
+        key.dst_port = 0;
+        key.pkt_len_low = (data_end - data) & 0xFF;  // 包长度低8位
+        key.first_u16 = 0;
+        
+        // 读取前2个字节
+        if (data + 2 <= data_end) {
+            key.first_u16 = *((__u16 *)data);
         }
-        // 处理其他协议（包括可能的 RDMA over Ethernet）
-        else {
-            // 通用流量统计 - 捕获所有其他协议
-            struct flow_key key = {};
-            key.src_ip = 0x00000000;
-            key.dst_ip = 0x00000000;
-            key.proto = eth->h_proto;
-            key.src_port = 0;
-            key.dst_port = 0;
 
-            struct flow_stats *val = bpf_map_lookup_elem(&flows, &key);
-            if (!val) {
-                struct flow_stats init = {1, data_end - data};
-                bpf_map_update_elem(&flows, &key, &init, BPF_ANY);
-            } else {
-                __sync_fetch_and_add(&val->packets, 1);
-                __sync_fetch_and_add(&val->bytes, data_end - data);
-            }
-            return XDP_PASS;
+        struct flow_stats *val = bpf_map_lookup_elem(&flows, &key);
+        if (!val) {
+            struct flow_stats init = {1, data_end - data};
+            bpf_map_update_elem(&flows, &key, &init, BPF_ANY);
+        } else {
+            __sync_fetch_and_add(&val->packets, 1);
+            __sync_fetch_and_add(&val->bytes, data_end - data);
         }
     }
     
