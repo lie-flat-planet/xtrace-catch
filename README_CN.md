@@ -114,13 +114,34 @@ sudo ./xtrace-catch -i ibs8f0 -f roce
 
 ### Docker 运行
 
+#### 基本示例
+
 ```bash
+# 前台运行，仅监控
 docker run --rm --privileged --network host \
+  -v /sys/fs/bpf:/sys/fs/bpf:rw \
+  xtrace-catch:latest -i ibs8f0
+```
+
+#### 完整示例（带 VictoriaMetrics + DNS 过滤）
+
+```bash
+# 后台运行，完整功能
+sudo docker run -d \
+  --name xtrace-catch-ibs8f0 \
+  --privileged \
+  --network host \
+  -v /sys/fs/bpf:/sys/fs/bpf:rw \
   -e VICTORIAMETRICS_ENABLED=true \
   -e VICTORIAMETRICS_REMOTE_WRITE=http://10.10.1.84:30428/api/v1/write \
-  -e COLLECT_AGG=cluster-01 \
-  -v /sys/fs/bpf:/sys/fs/bpf:rw \
-  xtrace-catch:latest -i ibs8f0 -f roce
+  -e COLLECT_AGG=demo \
+  registry.tong.com:5000/xtrace-catch:0.0.5 -i ibs8f0 --exclude-dns
+
+# 查看日志
+docker logs -f xtrace-catch-ibs8f0
+
+# 停止容器
+docker stop xtrace-catch-ibs8f0
 ```
 
 ### 支持的端点格式

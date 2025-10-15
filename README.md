@@ -116,13 +116,34 @@ sudo ./xtrace-catch -i ibs8f0 -f roce
 
 ### Docker Run
 
+#### Basic Example
+
 ```bash
+# Run in foreground, monitoring only
 docker run --rm --privileged --network host \
+  -v /sys/fs/bpf:/sys/fs/bpf:rw \
+  xtrace-catch:latest -i ibs8f0
+```
+
+#### Complete Example (with VictoriaMetrics + DNS filtering)
+
+```bash
+# Run in background, full features
+sudo docker run -d \
+  --name xtrace-catch-ibs8f0 \
+  --privileged \
+  --network host \
+  -v /sys/fs/bpf:/sys/fs/bpf:rw \
   -e VICTORIAMETRICS_ENABLED=true \
   -e VICTORIAMETRICS_REMOTE_WRITE=http://10.10.1.84:30428/api/v1/write \
-  -e COLLECT_AGG=cluster-01 \
-  -v /sys/fs/bpf:/sys/fs/bpf:rw \
-  xtrace-catch:latest -i ibs8f0 -f roce
+  -e COLLECT_AGG=demo \
+  registry.tong.com:5000/xtrace-catch:0.0.5 -i ibs8f0 --exclude-dns
+
+# View logs
+docker logs -f xtrace-catch-ibs8f0
+
+# Stop container
+docker stop xtrace-catch-ibs8f0
 ```
 
 ### Supported Endpoint Formats
