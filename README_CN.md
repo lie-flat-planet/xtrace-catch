@@ -273,7 +273,78 @@ sudo ./xtrace-catch
 2. **环境变量** - `export NETWORK_INTERFACE=eth0`
 3. **默认值** - `eth0`
 
-### 3. 使用 Makefile
+### 3. VictoriaMetrics 集成（仅 XDP 模式）
+
+通过环境变量使用 remote write API 将 metrics 推送到 VictoriaMetrics：
+
+```bash
+# 启用 VictoriaMetrics 推送
+export VICTORIAMETRICS_ENABLED=true
+export VICTORIAMETRICS_REMOTE_WRITE=http://localhost:8428/api/v1/import/prometheus
+
+# 运行程序
+sudo ./xtrace-catch -m xdp -i eth0
+```
+
+**部署 VictoriaMetrics：**
+```bash
+# 使用 Docker 运行 VictoriaMetrics
+docker run -d \
+  --name victoriametrics \
+  -p 8428:8428 \
+  -v victoria-metrics-data:/victoria-metrics-data \
+  victoriametrics/victoria-metrics:latest
+
+# 或本地安装
+# 下载地址: https://github.com/VictoriaMetrics/VictoriaMetrics/releases
+```
+
+**VictoriaMetrics 端点：**
+- 导入端点: `http://localhost:8428/api/v1/import/prometheus`
+- 查询端点: `http://localhost:8428/api/v1/query`
+- UI 仪表板: `http://localhost:8428/vmui`
+
+**可用的 Metrics：**
+- `xtrace_network_bytes_total` - 累计网络流量字节数 (Counter)
+- `xtrace_network_packets_total` - 累计网络数据包数量 (Counter)
+- `xtrace_network_flow_bytes` - 当前网络流字节数 (Gauge)
+- `xtrace_network_flow_packets` - 当前网络流数据包数量 (Gauge)
+
+所有 metrics 都包含标签：`src_ip`, `dst_ip`, `src_port`, `dst_port`, `protocol`, `traffic_type`
+
+**Docker 使用方式：**
+```bash
+# 启动 VictoriaMetrics
+docker run -d \
+  --name victoriametrics \
+  -p 8428:8428 \
+  -v victoria-metrics-data:/victoria-metrics-data \
+  victoriametrics/victoria-metrics:latest
+
+# 启动 xtrace-catch 并推送到 VictoriaMetrics
+docker run -d \
+  --name xtrace-catch \
+  --privileged \
+  --network host \
+  -e NETWORK_INTERFACE=eth0 \
+  -e VICTORIAMETRICS_ENABLED=true \
+  -e VICTORIAMETRICS_REMOTE_WRITE=http://localhost:8428/api/v1/import/prometheus \
+  xtrace-catch:latest
+```
+
+**查询 Metrics：**
+```bash
+# 查询特定 metrics
+curl 'http://localhost:8428/api/v1/query?query=xtrace_network_bytes_total'
+
+# 查看所有 metrics
+curl 'http://localhost:8428/api/v1/export?match[]=xtrace_network_bytes_total'
+
+# 访问 VictoriaMetrics UI
+open http://localhost:8428/vmui
+```
+
+### 4. 使用 Makefile
 
 ```bash
 # 查看所有可用命令

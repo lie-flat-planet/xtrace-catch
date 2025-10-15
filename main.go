@@ -12,11 +12,13 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 type FlowKey struct {
@@ -40,6 +42,23 @@ func ipToStr(ip uint32) string {
 	b := make([]byte, 4)
 	binary.LittleEndian.PutUint32(b, ip)
 	return net.IPv4(b[0], b[1], b[2], b[3]).String()
+}
+
+// 获取主机IP地址（获取第一个非环回的IPv4地址）
+func getHostIP() string {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return "unknown"
+	}
+
+	for _, addr := range addrs {
+		if ipNet, ok := addr.(*net.IPNet); ok && !ipNet.IP.IsLoopback() {
+			if ipNet.IP.To4() != nil {
+				return ipNet.IP.String()
+			}
+		}
+	}
+	return "unknown"
 }
 
 func main() {
@@ -89,8 +108,12 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  %s -m nccl -d mlx5_0               # NCCL 模式监控 mlx5_0 设备\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s --list                           # 列出所有网络接口\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "\n环境变量:\n")
-		fmt.Fprintf(os.Stderr, "  NETWORK_INTERFACE  设置默认网络接口\n")
-		fmt.Fprintf(os.Stderr, "  MONITOR_MODE       设置默认监控模式\n")
+		fmt.Fprintf(os.Stderr, "  NETWORK_INTERFACE             设置默认网络接口\n")
+		fmt.Fprintf(os.Stderr, "  MONITOR_MODE                  设置默认监控模式\n")
+		fmt.Fprintf(os.Stderr, "  VICTORIAMETRICS_ENABLED       启用 VictoriaMetrics 推送 (true/1 启用, 仅 XDP 模式)\n")
+		fmt.Fprintf(os.Stderr, "  VICTORIAMETRICS_REMOTE_WRITE  VictoriaMetrics remote write URL\n")
+		fmt.Fprintf(os.Stderr, "                                (默认: http://localhost:8428/api/v1/import/prometheus)\n")
+		fmt.Fprintf(os.Stderr, "  COLLECT_AGG                   算网标签，用于标识数据来源 (默认: default)\n")
 	}
 
 	flag.Parse()
@@ -133,6 +156,30 @@ func main() {
 		log.Printf("可用接口列表:")
 		listNetworkInterfaces()
 		log.Fatalf("请使用 -i 参数指定正确的网络接口")
+	}
+
+	// 检查是否启用 VictoriaMetrics（仅在 XDP 模式下）
+	metricsEnabled = false
+	if monitorMode == "xdp" {
+		if enabled := os.Getenv("VICTORIAMETRICS_ENABLED"); enabled == "true" || enabled == "1" {
+			metricsEnabled = true
+
+			// 获取 VictoriaMetrics Remote Write URL
+			remoteWriteURL := os.Getenv("VICTORIAMETRICS_REMOTE_WRITE")
+			if remoteWriteURL == "" {
+				remoteWriteURL = "http://localhost:8428/api/v1/import/prometheus" // 默认 VictoriaMetrics URL
+			}
+
+			// 获取算网标签
+			collectAgg = os.Getenv("COLLECT_AGG")
+			if collectAgg == "" {
+				collectAgg = "default" // 默认值
+			}
+			log.Printf("算网标签 (collect_agg): %s", collectAgg)
+
+			// 初始化 VictoriaMetrics metrics
+			initVictoriaMetrics(remoteWriteURL)
+		}
 	}
 
 	// 根据监控模式启动相应的监控程序
@@ -189,7 +236,10 @@ func startXDPMonitor(iface string, filter string) {
 	if filter != "" && filter != "all" {
 		filterMsg = fmt.Sprintf("，过滤: %s", filter)
 	}
-	log.Printf("启动 XDP 监控模式，网络接口: %s%s", iface, filterMsg)
+
+	// 获取主机IP地址
+	hostIP := getHostIP()
+	log.Printf("启动 XDP 监控模式，网络接口: %s，主机IP: %s%s", iface, hostIP, filterMsg)
 
 	spec, err := ebpf.LoadCollectionSpec("xdp_monitor.o")
 	if err != nil {
@@ -237,6 +287,37 @@ loop:
 					continue
 				}
 
+				// 端口号需要从网络字节序转换回主机字节序来显示
+				srcPort := binary.BigEndian.Uint16([]byte{byte(k.SrcPort >> 8), byte(k.SrcPort)})
+				dstPort := binary.BigEndian.Uint16([]byte{byte(k.DstPort >> 8), byte(k.DstPort)})
+
+				// 更新 VictoriaMetrics metrics（如果启用）
+				if metricsEnabled {
+					srcIPStr := ipToStr(k.SrcIP)
+					dstIPStr := ipToStr(k.DstIP)
+					srcPortStr := strconv.Itoa(int(srcPort))
+					dstPortStr := strconv.Itoa(int(dstPort))
+					protoStr := strconv.Itoa(int(k.Proto))
+					trafficTypeStr := getTrafficType(k.Proto, k.SrcPort, k.DstPort)
+
+					labels := prometheus.Labels{
+						"src_ip":       srcIPStr,
+						"dst_ip":       dstIPStr,
+						"src_port":     srcPortStr,
+						"dst_port":     dstPortStr,
+						"protocol":     protoStr,
+						"traffic_type": trafficTypeStr,
+						"interface":    iface,
+						"host_ip":      hostIP,
+						"collect_agg":  collectAgg,
+					}
+
+					networkBytesTotal.With(labels).Add(float64(v.Bytes))
+					networkPacketsTotal.With(labels).Add(float64(v.Packets))
+					networkFlowBytes.With(labels).Set(float64(v.Bytes))
+					networkFlowPackets.With(labels).Set(float64(v.Packets))
+				}
+
 				// 识别流量类型
 				rocePort := uint16(0xb712) // 4791 in network byte order
 				trafficType := ""
@@ -261,10 +342,6 @@ loop:
 					}
 				}
 
-				// 端口号需要从网络字节序转换回主机字节序来显示
-				srcPort := binary.BigEndian.Uint16([]byte{byte(k.SrcPort >> 8), byte(k.SrcPort)})
-				dstPort := binary.BigEndian.Uint16([]byte{byte(k.DstPort >> 8), byte(k.DstPort)})
-
 				// 显示调试信息
 				debugInfo := ""
 				if k.SrcIP == 0 && k.DstIP == 0 {
@@ -276,13 +353,20 @@ loop:
 						k.FirstU16, k.PktLenLow, avgLen)
 				}
 
-				fmt.Printf("%s:%d -> %s:%d proto=%d%s%s packets=%d bytes=%d\n",
+				fmt.Printf("%s:%d -> %s:%d proto=%d%s%s packets=%d bytes=%d host_ip=%s\n",
 					ipToStr(k.SrcIP), srcPort,
 					ipToStr(k.DstIP), dstPort,
-					k.Proto, trafficType, debugInfo, v.Packets, v.Bytes)
+					k.Proto, trafficType, debugInfo, v.Packets, v.Bytes, hostIP)
 			}
 			if err := iter.Err(); err != nil {
 				log.Printf("iter error: %v", err)
+			}
+
+			// 推送 metrics 到 VictoriaMetrics
+			if metricsEnabled {
+				if err := pushMetricsToVictoriaMetrics(); err != nil {
+					log.Printf("推送 VictoriaMetrics metrics 失败: %v", err)
+				}
 			}
 		case <-stop:
 			break loop

@@ -26,9 +26,9 @@ $(BPF_OBJ): xdp_monitor.c
 	$(CLANG) -O2 -target bpf -c xdp_monitor.c -o $(BPF_OBJ)
 
 # 编译 Go 程序
-$(PROGRAM): $(BPF_OBJ) main.go rdma_monitor.go nccl_monitor.go
+$(PROGRAM): $(BPF_OBJ) main.go metrics.go rdma_monitor.go nccl_monitor.go
 	@echo "编译 Go 程序..."
-	$(GO) build -o $(PROGRAM) main.go rdma_monitor.go nccl_monitor.go
+	$(GO) build -o $(PROGRAM) main.go metrics.go rdma_monitor.go nccl_monitor.go
 
 # 构建程序
 build: $(PROGRAM) ## 编译程序

@@ -39,6 +39,7 @@ RUN go mod download
 
 # 复制源代码
 COPY main.go .
+COPY metrics.go .
 COPY rdma_monitor.go .
 COPY nccl_monitor.go .
 COPY xdp_monitor.c .
@@ -53,7 +54,7 @@ RUN clang -O2 -g -target bpf -c xdp_monitor.c -o xdp_monitor.o \
     -Werror
 
 # 编译 Go 程序
-RUN go build -ldflags="-s -w" -o xtrace-catch main.go rdma_monitor.go nccl_monitor.go
+RUN go build -ldflags="-s -w" -o xtrace-catch main.go metrics.go rdma_monitor.go nccl_monitor.go
 
 # 验证编译结果
 RUN ls -la xtrace-catch xdp_monitor.o

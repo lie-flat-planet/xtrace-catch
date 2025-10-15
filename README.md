@@ -218,7 +218,78 @@ The program determines the network interface to monitor in the following priorit
 2. **Environment variables** - `export NETWORK_INTERFACE=eth0`
 3. **Default value** - `eth0`
 
-### 3. Using Makefile
+### 3. VictoriaMetrics Integration (XDP Mode Only)
+
+Push metrics to VictoriaMetrics using remote write API through environment variables:
+
+```bash
+# Enable VictoriaMetrics push
+export VICTORIAMETRICS_ENABLED=true
+export VICTORIAMETRICS_REMOTE_WRITE=http://localhost:8428/api/v1/import/prometheus
+
+# Run with VictoriaMetrics enabled
+sudo ./xtrace-catch -m xdp -i eth0
+```
+
+**Setup VictoriaMetrics:**
+```bash
+# Run VictoriaMetrics using Docker
+docker run -d \
+  --name victoriametrics \
+  -p 8428:8428 \
+  -v victoria-metrics-data:/victoria-metrics-data \
+  victoriametrics/victoria-metrics:latest
+
+# Or install locally
+# Download from: https://github.com/VictoriaMetrics/VictoriaMetrics/releases
+```
+
+**VictoriaMetrics Endpoints:**
+- Import endpoint: `http://localhost:8428/api/v1/import/prometheus`
+- Query endpoint: `http://localhost:8428/api/v1/query`
+- UI dashboard: `http://localhost:8428/vmui`
+
+**Available Metrics:**
+- `xtrace_network_bytes_total` - Total network traffic in bytes (Counter)
+- `xtrace_network_packets_total` - Total network packets (Counter)
+- `xtrace_network_flow_bytes` - Current network flow bytes (Gauge)
+- `xtrace_network_flow_packets` - Current network flow packets (Gauge)
+
+All metrics include labels: `src_ip`, `dst_ip`, `src_port`, `dst_port`, `protocol`, `traffic_type`
+
+**Docker Usage:**
+```bash
+# Run VictoriaMetrics
+docker run -d \
+  --name victoriametrics \
+  -p 8428:8428 \
+  -v victoria-metrics-data:/victoria-metrics-data \
+  victoriametrics/victoria-metrics:latest
+
+# Run xtrace-catch with VictoriaMetrics push
+docker run -d \
+  --name xtrace-catch \
+  --privileged \
+  --network host \
+  -e NETWORK_INTERFACE=eth0 \
+  -e VICTORIAMETRICS_ENABLED=true \
+  -e VICTORIAMETRICS_REMOTE_WRITE=http://localhost:8428/api/v1/import/prometheus \
+  xtrace-catch:latest
+```
+
+**Query Metrics:**
+```bash
+# Query specific metrics
+curl 'http://localhost:8428/api/v1/query?query=xtrace_network_bytes_total'
+
+# View all metrics
+curl 'http://localhost:8428/api/v1/export?match[]=xtrace_network_bytes_total'
+
+# Access VictoriaMetrics UI
+open http://localhost:8428/vmui
+```
+
+### 4. Using Makefile
 
 ```bash
 # View all available commands
