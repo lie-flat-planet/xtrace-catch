@@ -23,11 +23,10 @@ services:
     
     # Environment variables
     environment:
-      - NETWORK_INTERFACE=${INTERFACE:-ens8f1np1}
-      - MONITOR_MODE=${MODE:-xdp}
+      - NETWORK_INTERFACE=${INTERFACE:-eth0}
     
-    # Command line arguments - 支持多种监控模式
-    command: ["-m", "${MODE:-nccl}", "-i", "${INTERFACE:-ibs8f0}", "-d", "${DEVICE:-mlx5_0}"]
+    # Command line arguments
+    command: ["-i", "${INTERFACE:-eth0}"]
     
     # Container labels
     labels:
