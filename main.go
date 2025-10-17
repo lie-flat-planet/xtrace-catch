@@ -91,12 +91,15 @@ func main() {
 	var listInterfaces bool
 	var filterTraffic string
 	var excludeDNS bool
+	var intervalMs int
 
 	flag.StringVar(&iface, "i", "", "网络接口名称 (例如: eth0, enp0s3)")
 	flag.StringVar(&iface, "interface", "", "网络接口名称 (例如: eth0, enp0s3)")
 	flag.StringVar(&filterTraffic, "f", "", "过滤流量类型: roce, roce_v1, roce_v2, tcp, udp, ib, all")
 	flag.StringVar(&filterTraffic, "filter", "", "过滤流量类型: roce, roce_v1, roce_v2, tcp, udp, ib, all")
 	flag.BoolVar(&excludeDNS, "exclude-dns", false, "排除DNS流量（过滤常见DNS服务器）")
+	flag.IntVar(&intervalMs, "t", 5000, "数据采集和推送间隔（毫秒），默认5000ms")
+	flag.IntVar(&intervalMs, "interval", 5000, "数据采集和推送间隔（毫秒），默认5000ms")
 	flag.BoolVar(&showHelp, "h", false, "显示帮助信息")
 	flag.BoolVar(&showHelp, "help", false, "显示帮助信息")
 	flag.BoolVar(&listInterfaces, "l", false, "列出所有可用的网络接口")
@@ -116,12 +119,15 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  ib         - 仅 InfiniBand 流量\n")
 		fmt.Fprintf(os.Stderr, "  all        - 所有流量 (默认)\n")
 		fmt.Fprintf(os.Stderr, "\n其他选项:\n")
-		fmt.Fprintf(os.Stderr, "  --exclude-dns  排除DNS流量（过滤223.5.5.5等常见DNS服务器）\n")
+		fmt.Fprintf(os.Stderr, "  --exclude-dns     排除DNS流量（过滤223.5.5.5等常见DNS服务器）\n")
+		fmt.Fprintf(os.Stderr, "  -t, --interval    数据采集和推送间隔（毫秒），默认5000ms，范围100-3600000\n")
 		fmt.Fprintf(os.Stderr, "\n示例:\n")
 		fmt.Fprintf(os.Stderr, "  %s -i eth0                        # 监控 eth0 接口\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s -i ibs8f0 -f roce              # 仅显示 RoCE 流量\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s -i ibs8f0 -f roce_v2           # 仅显示 RoCE v2 流量\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s -i eth0 --exclude-dns          # 排除DNS流量\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -i eth0 -t 500                 # 每500ms采集一次（高频）\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -i eth0 -t 10000               # 每10秒采集一次数据\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s --list                         # 列出所有网络接口\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "\n环境变量:\n")
 		fmt.Fprintf(os.Stderr, "  NETWORK_INTERFACE             设置默认网络接口\n")
@@ -185,6 +191,14 @@ func main() {
 		initVictoriaMetrics(remoteWriteURL)
 	}
 
+	// 验证间隔参数
+	if intervalMs < 100 {
+		log.Fatal("间隔时间必须大于等于100毫秒")
+	}
+	if intervalMs > 3600000 {
+		log.Fatal("间隔时间不能超过3600000毫秒（1小时）")
+	}
+
 	// 启动 XDP 监控
-	startXDPMonitor(iface, filterTraffic, excludeDNS)
+	startXDPMonitor(iface, filterTraffic, excludeDNS, intervalMs)
 }

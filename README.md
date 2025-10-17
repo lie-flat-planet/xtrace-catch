@@ -70,6 +70,7 @@ sudo yum install -y clang llvm libbpf-devel kernel-devel
 Options:
   -i, --interface string   Network interface name (default: eth0)
   -f, --filter string      Filter traffic type: roce, roce_v1, roce_v2, tcp, udp, ib, all
+  -t, --interval int       Data collection and push interval (milliseconds), default 5000ms, range 100-3600000
   --exclude-dns           Exclude DNS traffic (filters common DNS servers)
   -h, --help              Show help message
   -l, --list              List all available network interfaces
@@ -90,7 +91,16 @@ sudo ./xtrace-catch -i eth0 -f tcp
 # Exclude DNS traffic (223.5.5.5, 8.8.8.8, etc.)
 sudo ./xtrace-catch -i eth0 --exclude-dns
 
-# Show all traffic (default)
+# Collect data every 500ms (high frequency monitoring)
+sudo ./xtrace-catch -i eth0 -t 500
+
+# Collect data every 10 seconds (reduce data volume)
+sudo ./xtrace-catch -i eth0 -t 10000
+
+# Every 30 seconds, RoCE only, exclude DNS
+sudo ./xtrace-catch -i ibs8f0 -f roce -t 30000 --exclude-dns
+
+# Show all traffic (default 5000ms)
 sudo ./xtrace-catch -i eth0
 ```
 
@@ -137,7 +147,7 @@ sudo docker run -d \
   -e VICTORIAMETRICS_ENABLED=true \
   -e VICTORIAMETRICS_REMOTE_WRITE=http://10.10.1.84:30428/api/v1/write \
   -e COLLECT_AGG=demo \
-  registry.tong.com:5000/xtrace-catch:0.0.5 -i ibs8f0 --exclude-dns
+  registry.tong.com:5000/xtrace-catch:0.0.5 -i ibs8f0 -t 10000 --exclude-dns
 
 # View logs
 docker logs -f xtrace-catch-ibs8f0

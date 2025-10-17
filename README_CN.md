@@ -68,6 +68,7 @@ sudo yum install -y clang llvm libbpf-devel kernel-devel
 选项:
   -i, --interface string   网络接口名称 (默认: eth0)
   -f, --filter string      过滤流量类型: roce, roce_v1, roce_v2, tcp, udp, ib, all
+  -t, --interval int       数据采集和推送间隔（毫秒），默认5000ms，范围100-3600000
   --exclude-dns           排除DNS流量（过滤223.5.5.5等常见DNS服务器）
   -h, --help              显示帮助信息
   -l, --list              列出所有可用的网络接口
@@ -88,7 +89,16 @@ sudo ./xtrace-catch -i eth0 -f tcp
 # 排除DNS流量（223.5.5.5、8.8.8.8等）
 sudo ./xtrace-catch -i eth0 --exclude-dns
 
-# 显示所有流量（默认）
+# 每500ms采集一次数据（高频监控）
+sudo ./xtrace-catch -i eth0 -t 500
+
+# 每10秒采集一次数据（降低数据量）
+sudo ./xtrace-catch -i eth0 -t 10000
+
+# 每30秒采集，仅RoCE流量，排除DNS
+sudo ./xtrace-catch -i ibs8f0 -f roce -t 30000 --exclude-dns
+
+# 显示所有流量（默认5000ms）
 sudo ./xtrace-catch -i eth0
 ```
 
@@ -135,7 +145,7 @@ sudo docker run -d \
   -e VICTORIAMETRICS_ENABLED=true \
   -e VICTORIAMETRICS_REMOTE_WRITE=http://10.10.1.84:30428/api/v1/write \
   -e COLLECT_AGG=demo \
-  registry.tong.com:5000/xtrace-catch:0.0.5 -i ibs8f0 --exclude-dns
+  registry.tong.com:5000/xtrace-catch:0.0.5 -i ibs8f0 -t 10000 --exclude-dns
 
 # 查看日志
 docker logs -f xtrace-catch-ibs8f0

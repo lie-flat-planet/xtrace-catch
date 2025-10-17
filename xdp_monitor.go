@@ -19,7 +19,7 @@ import (
 )
 
 // XDP 监控模式
-func startXDPMonitor(iface string, filter string, excludeDNS bool) {
+func startXDPMonitor(iface string, filter string, excludeDNS bool, intervalMs int) {
 	filterMsg := ""
 	if filter != "" && filter != "all" {
 		filterMsg = fmt.Sprintf("，过滤: %s", filter)
@@ -27,7 +27,7 @@ func startXDPMonitor(iface string, filter string, excludeDNS bool) {
 
 	// 获取主机IP地址
 	hostIP := getHostIP()
-	log.Printf("启动 XDP 监控模式，网络接口: %s，主机IP: %s%s", iface, hostIP, filterMsg)
+	log.Printf("启动 XDP 监控模式，网络接口: %s，主机IP: %s，采集间隔: %dms%s", iface, hostIP, intervalMs, filterMsg)
 
 	spec, err := ebpf.LoadCollectionSpec("xdp_monitor.o")
 	if err != nil {
@@ -59,7 +59,9 @@ func startXDPMonitor(iface string, filter string, excludeDNS bool) {
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 
-	ticker := time.NewTicker(5 * time.Second)
+	// 将毫秒转换为 Duration
+	duration := time.Duration(intervalMs) * time.Millisecond
+	ticker := time.NewTicker(duration)
 	defer ticker.Stop()
 
 loop:
