@@ -92,6 +92,8 @@ func main() {
 	var filterTraffic string
 	var excludeDNS bool
 	var intervalMs int
+	var monitorMode string
+	var direction string
 
 	flag.StringVar(&iface, "i", "", "网络接口名称 (例如: eth0, enp0s3)")
 	flag.StringVar(&iface, "interface", "", "网络接口名称 (例如: eth0, enp0s3)")
@@ -100,16 +102,27 @@ func main() {
 	flag.BoolVar(&excludeDNS, "exclude-dns", false, "排除DNS流量（过滤常见DNS服务器）")
 	flag.IntVar(&intervalMs, "t", 5000, "数据采集和推送间隔（毫秒），默认5000ms")
 	flag.IntVar(&intervalMs, "interval", 5000, "数据采集和推送间隔（毫秒），默认5000ms")
+	flag.StringVar(&monitorMode, "m", "xdp", "监控模式: xdp (仅入口), tc (支持入口和出口)")
+	flag.StringVar(&monitorMode, "mode", "xdp", "监控模式: xdp (仅入口), tc (支持入口和出口)")
+	flag.StringVar(&direction, "d", "ingress", "流量方向: ingress (入口), egress (出口), both (双向)")
+	flag.StringVar(&direction, "direction", "ingress", "流量方向: ingress (入口), egress (出口), both (双向)")
 	flag.BoolVar(&showHelp, "h", false, "显示帮助信息")
 	flag.BoolVar(&showHelp, "help", false, "显示帮助信息")
 	flag.BoolVar(&listInterfaces, "l", false, "列出所有可用的网络接口")
 	flag.BoolVar(&listInterfaces, "list", false, "列出所有可用的网络接口")
 
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "XTrace-Catch: XDP 网络流量监控器\n\n")
+		fmt.Fprintf(os.Stderr, "XTrace-Catch: 高性能网络流量监控器 (支持 XDP/TC)\n\n")
 		fmt.Fprintf(os.Stderr, "用法: %s [选项]\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "选项:\n")
 		flag.PrintDefaults()
+		fmt.Fprintf(os.Stderr, "\n监控模式:\n")
+		fmt.Fprintf(os.Stderr, "  xdp        - XDP模式 (仅支持入口流量，性能最高)\n")
+		fmt.Fprintf(os.Stderr, "  tc         - TC模式 (支持入口和出口流量)\n")
+		fmt.Fprintf(os.Stderr, "\n流量方向 (仅TC模式):\n")
+		fmt.Fprintf(os.Stderr, "  ingress    - 入口流量 (默认)\n")
+		fmt.Fprintf(os.Stderr, "  egress     - 出口流量\n")
+		fmt.Fprintf(os.Stderr, "  both       - 双向流量 (同时监控入口和出口)\n")
 		fmt.Fprintf(os.Stderr, "\n流量过滤:\n")
 		fmt.Fprintf(os.Stderr, "  roce       - 所有 RoCE 流量 (v1 + v2)\n")
 		fmt.Fprintf(os.Stderr, "  roce_v1    - 仅 RoCE v1/IBoE 流量\n")
@@ -122,7 +135,9 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  --exclude-dns     排除DNS流量（过滤223.5.5.5等常见DNS服务器）\n")
 		fmt.Fprintf(os.Stderr, "  -t, --interval    数据采集和推送间隔（毫秒），默认5000ms，范围100-3600000\n")
 		fmt.Fprintf(os.Stderr, "\n示例:\n")
-		fmt.Fprintf(os.Stderr, "  %s -i eth0                        # 监控 eth0 接口\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -i eth0                        # XDP模式监控 eth0 接口\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -i eth0 -m tc -d egress        # TC模式监控出口流量\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -i eth0 -m tc -d both          # TC模式监控双向流量\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s -i ibs8f0 -f roce              # 仅显示 RoCE 流量\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s -i ibs8f0 -f roce_v2           # 仅显示 RoCE v2 流量\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s -i eth0 --exclude-dns          # 排除DNS流量\n", os.Args[0])
@@ -199,6 +214,35 @@ func main() {
 		log.Fatal("间隔时间不能超过3600000毫秒（1小时）")
 	}
 
-	// 启动 XDP 监控
-	startXDPMonitor(iface, filterTraffic, excludeDNS, intervalMs)
+	// 验证监控模式和方向参数
+	if monitorMode != "xdp" && monitorMode != "tc" {
+		log.Fatal("监控模式必须是 'xdp' 或 'tc'")
+	}
+
+	if direction != "ingress" && direction != "egress" && direction != "both" {
+		log.Fatal("流量方向必须是 'ingress', 'egress' 或 'both'")
+	}
+
+	// 如果使用XDP模式但指定了出口方向，给出警告
+	if monitorMode == "xdp" && (direction == "egress" || direction == "both") {
+		log.Printf("警告: XDP模式不支持出口流量监控，将使用TC模式")
+		monitorMode = "tc"
+	}
+
+	// 启动监控
+	if monitorMode == "xdp" {
+		// XDP模式 - 仅支持入口流量
+		startXDPMonitor(iface, filterTraffic, excludeDNS, intervalMs)
+	} else {
+		// TC模式 - 支持入口和出口流量
+		if direction == "both" {
+			// 双向监控 - 启动两个goroutine
+			log.Printf("启动双向流量监控...")
+			go startTCMonitor(iface, filterTraffic, excludeDNS, intervalMs, "ingress")
+			startTCMonitor(iface, filterTraffic, excludeDNS, intervalMs, "egress")
+		} else {
+			// 单向监控
+			startTCMonitor(iface, filterTraffic, excludeDNS, intervalMs, direction)
+		}
+	}
 }

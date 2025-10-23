@@ -1,14 +1,15 @@
-# XTrace-Catch: XDP 网络流量监控器
+# XTrace-Catch: 高性能网络流量监控器
 
-基于 eBPF/XDP 技术的高性能网络流量监控工具，专注于实时捕获和分析网络数据包，支持 RoCE/InfiniBand 流量监控。
+基于 eBPF/XDP/TC 技术的高性能网络流量监控工具，专注于实时捕获和分析网络数据包，支持 RoCE/InfiniBand 流量监控，**支持出口流量检测**。
 
 ## ✨ 特性
 
-- 🚀 **高性能**: 基于 XDP 技术，在内核网络栈最早期捕获数据包
+- 🚀 **高性能**: 基于 XDP/TC 技术，在内核网络栈最早期捕获数据包
 - 📊 **低开销**: CPU 使用率 < 5%，对系统性能影响极小
 - 🔍 **流量识别**: 自动识别 TCP、UDP、RoCE v1/v2、InfiniBand 流量
 - 📈 **Metrics 推送**: 支持推送到 VictoriaMetrics（兼容 Prometheus）
 - 🎯 **流量过滤**: 可按协议类型过滤显示（roce、tcp、udp 等）
+- 🔄 **双向监控**: 支持入口和出口流量监控（TC模式）
 - 🐳 **容器化**: Docker 一键部署，无需手动安装依赖
 
 ## 🛠️ 快速开始
@@ -26,6 +27,16 @@ docker run --rm --privileged --network host \
   -v /sys/fs/bpf:/sys/fs/bpf:rw \
   xtrace-catch:latest -i ibs8f0 -f roce
 
+# 监控出口流量（TC模式）
+docker run --rm --privileged --network host \
+  -v /sys/fs/bpf:/sys/fs/bpf:rw \
+  xtrace-catch:latest -i eth0 -m tc -d egress
+
+# 监控双向流量（TC模式）
+docker run --rm --privileged --network host \
+  -v /sys/fs/bpf:/sys/fs/bpf:rw \
+  xtrace-catch:latest -i eth0 -m tc -d both
+
 # 使用 docker-compose
 INTERFACE=eth0 docker-compose up
 ```
@@ -41,6 +52,12 @@ sudo ./xtrace-catch -i eth0
 
 # 过滤 RoCE 流量
 sudo ./xtrace-catch -i ibs8f0 -f roce
+
+# 监控出口流量（TC模式）
+sudo ./xtrace-catch -i eth0 -m tc -d egress
+
+# 监控双向流量（TC模式）
+sudo ./xtrace-catch -i eth0 -m tc -d both
 ```
 
 ## 📋 系统要求
@@ -69,10 +86,24 @@ sudo yum install -y clang llvm libbpf-devel kernel-devel
   -i, --interface string   网络接口名称 (默认: eth0)
   -f, --filter string      过滤流量类型: roce, roce_v1, roce_v2, tcp, udp, ib, all
   -t, --interval int       数据采集和推送间隔（毫秒），默认5000ms，范围100-3600000
+  -m, --mode string        监控模式: xdp (仅入口), tc (支持入口和出口)
+  -d, --direction string   流量方向: ingress (入口), egress (出口), both (双向)
   --exclude-dns           排除DNS流量（过滤223.5.5.5等常见DNS服务器）
   -h, --help              显示帮助信息
   -l, --list              列出所有可用的网络接口
 ```
+
+### 监控模式说明
+
+#### XDP模式（默认）
+- **特点**: 性能最高，CPU开销最小
+- **限制**: 仅支持入口流量监控
+- **适用场景**: 高性能网络监控，仅需监控入站流量
+
+#### TC模式
+- **特点**: 支持入口和出口流量监控
+- **性能**: 略低于XDP，但仍保持高性能
+- **适用场景**: 需要完整双向流量监控的场景
 
 ### 流量过滤
 

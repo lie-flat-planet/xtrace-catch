@@ -36,8 +36,10 @@ RUN go mod download
 # 复制源代码
 COPY main.go .
 COPY xdp_monitor.go .
+COPY tc_monitor.go .
 COPY metrics.go .
 COPY xdp_monitor.c .
+COPY tc_monitor.c .
 
 # 编译 eBPF 程序
 RUN clang -O2 -g -target bpf -c xdp_monitor.c -o xdp_monitor.o \
@@ -48,11 +50,19 @@ RUN clang -O2 -g -target bpf -c xdp_monitor.c -o xdp_monitor.o \
     -Wno-compare-distinct-pointer-types \
     -Werror
 
+RUN clang -O2 -g -target bpf -c tc_monitor.c -o tc_monitor.o \
+    -I/usr/include/x86_64-linux-gnu \
+    -I/usr/include/asm \
+    -I/usr/include/asm-generic \
+    -Wall -Wno-unused-value -Wno-pointer-sign \
+    -Wno-compare-distinct-pointer-types \
+    -Werror
+
 # 编译 Go 程序
-RUN go build -ldflags="-s -w" -o xtrace-catch main.go xdp_monitor.go metrics.go
+RUN go build -ldflags="-s -w" -o xtrace-catch main.go xdp_monitor.go tc_monitor.go metrics.go
 
 # 验证编译结果
-RUN ls -la xtrace-catch xdp_monitor.o
+RUN ls -la xtrace-catch xdp_monitor.o tc_monitor.o
 
 # ===================
 # 运行时镜像 - 使用更小的 Ubuntu
@@ -100,6 +110,7 @@ WORKDIR /app
 # 从构建镜像复制编译好的程序
 COPY --from=builder /app/xtrace-catch /app/
 COPY --from=builder /app/xdp_monitor.o /app/
+COPY --from=builder /app/tc_monitor.o /app/
 
 # 创建启动脚本
 RUN echo '#!/bin/bash' > /app/entrypoint.sh && \
@@ -112,7 +123,7 @@ RUN echo '#!/bin/bash' > /app/entrypoint.sh && \
     echo 'fi' >> /app/entrypoint.sh && \
     echo '' >> /app/entrypoint.sh && \
     echo '# Run main program' >> /app/entrypoint.sh && \
-    echo 'echo "=== Starting XDP Network Traffic Monitor ==="' >> /app/entrypoint.sh && \
+    echo 'echo "=== Starting XTrace-Catch Network Traffic Monitor ==="' >> /app/entrypoint.sh && \
     echo '# 设置内存锁定限制' >> /app/entrypoint.sh && \
     echo 'ulimit -l unlimited' >> /app/entrypoint.sh && \
     echo 'exec ./xtrace-catch "$@"' >> /app/entrypoint.sh && \
@@ -127,10 +138,11 @@ CMD ["-i", "eth0"]
 # 添加标签
 LABEL \
     maintainer="xtrace-catch" \
-    description="XDP Network Traffic Monitor" \
+    description="High-Performance Network Traffic Monitor (XDP/TC)" \
     version="2.0" \
     go.version="1.24" \
     requires.privileged="true" \
     requires.net="host" \
     requires.volumes="/sys/fs/bpf" \
-    mode="xdp"
+    modes="xdp,tc" \
+    features="ingress,egress"

@@ -5,7 +5,8 @@
 
 # 程序名称和版本
 PROGRAM := xtrace-catch
-BPF_OBJ := xdp_monitor.o
+XDP_OBJ := xdp_monitor.o
+TC_OBJ := tc_monitor.o
 IMAGE_NAME := xtrace-catch
 VERSION := $(shell cat .version 2>/dev/null || echo "dev")
 
@@ -20,15 +21,20 @@ help: ## 显示帮助信息
 	@echo "常用命令："
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-15s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-# 编译 eBPF 程序
-$(BPF_OBJ): xdp_monitor.c
-	@echo "编译 eBPF 程序..."
-	$(CLANG) -O2 -target bpf -c xdp_monitor.c -o $(BPF_OBJ)
+# 编译 XDP eBPF 程序
+$(XDP_OBJ): xdp_monitor.c
+	@echo "编译 XDP eBPF 程序..."
+	$(CLANG) -O2 -target bpf -c xdp_monitor.c -o $(XDP_OBJ)
+
+# 编译 TC eBPF 程序
+$(TC_OBJ): tc_monitor.c
+	@echo "编译 TC eBPF 程序..."
+	$(CLANG) -O2 -target bpf -c tc_monitor.c -o $(TC_OBJ)
 
 # 编译 Go 程序
-$(PROGRAM): $(BPF_OBJ) main.go xdp_monitor.go metrics.go
+$(PROGRAM): $(XDP_OBJ) $(TC_OBJ) main.go xdp_monitor.go tc_monitor.go metrics.go
 	@echo "编译 Go 程序..."
-	$(GO) build -o $(PROGRAM) main.go xdp_monitor.go metrics.go
+	$(GO) build -o $(PROGRAM) main.go xdp_monitor.go tc_monitor.go metrics.go
 
 # 构建程序
 build: $(PROGRAM) ## 编译程序
@@ -36,7 +42,7 @@ build: $(PROGRAM) ## 编译程序
 # 清理编译文件
 clean: ## 清理编译文件
 	@echo "清理编译文件..."
-	rm -f $(PROGRAM) $(BPF_OBJ)
+	rm -f $(PROGRAM) $(XDP_OBJ) $(TC_OBJ)
 
 # 构建 Docker 镜像
 docker-build: ## 构建 Docker 镜像

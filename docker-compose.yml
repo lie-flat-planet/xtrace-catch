@@ -24,14 +24,19 @@ services:
     # Environment variables
     environment:
       - NETWORK_INTERFACE=${INTERFACE:-eth0}
+      - VICTORIAMETRICS_ENABLED=${VICTORIAMETRICS_ENABLED:-false}
+      - VICTORIAMETRICS_REMOTE_WRITE=${VICTORIAMETRICS_REMOTE_WRITE:-}
+      - COLLECT_AGG=${COLLECT_AGG:-default}
     
     # Command line arguments
-    command: ["-i", "${INTERFACE:-eth0}"]
+    command: ["-i", "${INTERFACE:-eth0}", "-m", "${MODE:-xdp}", "-d", "${DIRECTION:-ingress}"]
     
     # Container labels
     labels:
       - "com.xtrace.component=monitor"
-      - "com.xtrace.version=1.0"
+      - "com.xtrace.version=2.0"
+      - "com.xtrace.modes=xdp,tc"
+      - "com.xtrace.features=ingress,egress"
     
     # Restart policy
     restart: unless-stopped

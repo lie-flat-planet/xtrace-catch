@@ -1,16 +1,17 @@
-# XTrace-Catch: XDP Network Traffic Monitor
+# XTrace-Catch: High-Performance Network Traffic Monitor
 
-A high-performance network traffic monitoring tool based on eBPF/XDP technology, focused on real-time packet capture and analysis with support for RoCE/InfiniBand traffic monitoring.
+A high-performance network traffic monitoring tool based on eBPF/XDP/TC technology, focused on real-time packet capture and analysis with support for RoCE/InfiniBand traffic monitoring and **egress traffic detection**.
 
 [中文文档](README_CN.md)
 
 ## ✨ Features
 
-- 🚀 **High Performance**: Based on XDP technology, captures packets at the earliest stage of the network stack
+- 🚀 **High Performance**: Based on XDP/TC technology, captures packets at the earliest stage of the network stack
 - 📊 **Low Overhead**: CPU usage < 5%, minimal impact on system performance
 - 🔍 **Traffic Identification**: Automatically identifies TCP, UDP, RoCE v1/v2, InfiniBand traffic
 - 📈 **Metrics Push**: Supports pushing to VictoriaMetrics (Prometheus compatible)
 - 🎯 **Traffic Filtering**: Filter by protocol type (roce, tcp, udp, etc.)
+- 🔄 **Bidirectional Monitoring**: Supports ingress and egress traffic monitoring (TC mode)
 - 🐳 **Containerized**: One-command Docker deployment, no manual dependency installation
 
 ## 🛠️ Quick Start
@@ -28,6 +29,16 @@ docker run --rm --privileged --network host \
   -v /sys/fs/bpf:/sys/fs/bpf:rw \
   xtrace-catch:latest -i ibs8f0 -f roce
 
+# Monitor egress traffic (TC mode)
+docker run --rm --privileged --network host \
+  -v /sys/fs/bpf:/sys/fs/bpf:rw \
+  xtrace-catch:latest -i eth0 -m tc -d egress
+
+# Monitor bidirectional traffic (TC mode)
+docker run --rm --privileged --network host \
+  -v /sys/fs/bpf:/sys/fs/bpf:rw \
+  xtrace-catch:latest -i eth0 -m tc -d both
+
 # Using docker-compose
 INTERFACE=eth0 docker-compose up
 ```
@@ -43,6 +54,12 @@ sudo ./xtrace-catch -i eth0
 
 # Filter RoCE traffic
 sudo ./xtrace-catch -i ibs8f0 -f roce
+
+# Monitor egress traffic (TC mode)
+sudo ./xtrace-catch -i eth0 -m tc -d egress
+
+# Monitor bidirectional traffic (TC mode)
+sudo ./xtrace-catch -i eth0 -m tc -d both
 ```
 
 ## 📋 System Requirements
@@ -71,10 +88,24 @@ Options:
   -i, --interface string   Network interface name (default: eth0)
   -f, --filter string      Filter traffic type: roce, roce_v1, roce_v2, tcp, udp, ib, all
   -t, --interval int       Data collection and push interval (milliseconds), default 5000ms, range 100-3600000
+  -m, --mode string        Monitoring mode: xdp (ingress only), tc (supports ingress and egress)
+  -d, --direction string   Traffic direction: ingress (ingress), egress (egress), both (bidirectional)
   --exclude-dns           Exclude DNS traffic (filters common DNS servers)
   -h, --help              Show help message
   -l, --list              List all available network interfaces
 ```
+
+### Monitoring Modes
+
+#### XDP Mode (Default)
+- **Features**: Highest performance, lowest CPU overhead
+- **Limitations**: Ingress traffic monitoring only
+- **Use Cases**: High-performance network monitoring, ingress-only requirements
+
+#### TC Mode
+- **Features**: Supports both ingress and egress traffic monitoring
+- **Performance**: Slightly lower than XDP, but still high performance
+- **Use Cases**: Complete bidirectional traffic monitoring scenarios
 
 ### Traffic Filtering
 
@@ -107,9 +138,12 @@ sudo ./xtrace-catch -i eth0
 ### Output Example
 
 ```
+# XDP mode (ingress only)
 192.168.1.10:45678 -> 192.168.1.20:4791 proto=17 [RoCE v2/UDP] packets=1500 bytes=2048000 host_ip=192.168.1.10
-10.0.0.1:0 -> 10.0.0.2:0 proto=21 [RoCE v1/IBoE] packets=2500 bytes=3072000 host_ip=192.168.1.10
-192.168.1.30:80 -> 192.168.1.40:50234 proto=6 [TCP] packets=100 bytes=65536 host_ip=192.168.1.10
+
+# TC mode (with direction labels)
+[ingress] 192.168.1.10:45678 -> 192.168.1.20:4791 proto=17 [RoCE v2/UDP] packets=1500 bytes=2048000 host_ip=192.168.1.10
+[egress] 192.168.1.20:4791 -> 192.168.1.10:45678 proto=17 [RoCE v2/UDP] packets=1200 bytes=1800000 host_ip=192.168.1.10
 ```
 
 ## 📊 VictoriaMetrics Integration
@@ -173,6 +207,7 @@ Pushed metrics include the following labels:
 - `interface`: Network interface name
 - `host_ip`: Host IP address
 - `collect_agg`: Custom label (for distinguishing clusters/nodes)
+- `direction`: Traffic direction (ingress/egress, TC mode only)
 
 Metric names:
 - `xtrace_network_bytes_total`: Total traffic bytes (Counter)
@@ -257,12 +292,15 @@ XTrace-Catch supports monitoring the following RoCE traffic:
 xtrace-catch/
 ├── main.go            # Main program entry
 ├── xdp_monitor.go     # XDP monitoring implementation
+├── tc_monitor.go      # TC monitoring implementation (supports egress)
 ├── metrics.go         # VictoriaMetrics push logic
 ├── xdp_monitor.c      # eBPF/XDP program (C code)
+├── tc_monitor.c       # eBPF/TC program (C code)
 ├── Makefile           # Build script
 ├── Dockerfile         # Docker image build
 ├── docker-compose.yml # Docker Compose configuration
-└── README.md          # Documentation
+├── README.md          # English documentation
+└── README_CN.md       # Chinese documentation
 ```
 
 ## 🤝 FAQ
