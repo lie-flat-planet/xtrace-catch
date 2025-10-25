@@ -107,10 +107,10 @@ parse_ip:
         // 获取当前时间戳（纳秒）
         __u64 current_time = bpf_ktime_get_ns();
 
-        // 使用 IP 头中的 tot_len 字段统计真实的 IP 数据包大小
-        // 这样可以排除 L2 封装开销（IPoIB 头部等）
-        __u16 ip_total_len = __builtin_bswap16(ip->tot_len);
-        __u64 bytes_to_count = ip_total_len;
+        // 计算完整的包大小（包含 L2 层开销）
+        // 这样统计的结果与 node_exporter 一致
+        // data_end - data = 完整包长（包括 L2 头部、IP 数据、可能的填充等）
+        __u64 bytes_to_count = data_end - data;
 
         // 查找或创建流统计
         struct flow_stats *val = bpf_map_lookup_elem(&flows, &key);
