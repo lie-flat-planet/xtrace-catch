@@ -19,7 +19,7 @@ import (
 )
 
 // XDP 监控模式
-func startXDPMonitor(iface string, filter string, excludeDNS bool, intervalMs int) {
+func startXDPMonitor(iface string, filter string, excludeDNS bool, intervalMs int, countL2 bool) {
 	filterMsg := ""
 	if filter != "" && filter != "all" {
 		filterMsg = fmt.Sprintf("，过滤: %s", filter)
@@ -28,6 +28,9 @@ func startXDPMonitor(iface string, filter string, excludeDNS bool, intervalMs in
 	// 获取主机IP地址
 	hostIP := getHostIP()
 	log.Printf("启动 XDP 监控模式，网络接口: %s，主机IP: %s，采集间隔: %dms%s", iface, hostIP, intervalMs, filterMsg)
+
+	// 用于保存上次统计数据的map
+	lastStats := make(map[FlowKey]FlowStats)
 
 	spec, err := ebpf.LoadCollectionSpec("xdp_monitor.o")
 	if err != nil {
@@ -64,14 +67,30 @@ func startXDPMonitor(iface string, filter string, excludeDNS bool, intervalMs in
 	ticker := time.NewTicker(duration)
 	defer ticker.Stop()
 
+	// 记录上次采集时间，用于计算速率
+	lastCollectTime := time.Now()
+
 loop:
 	for {
 		select {
 		case <-ticker.C:
+			// 计算时间间隔（实际经过的时间，用于精确计算速率）
+			now := time.Now()
+			intervalSeconds := now.Sub(lastCollectTime).Seconds()
+			lastCollectTime = now
+
+			// 记录本次采集中活跃的流
+			activeFlows := make(map[FlowKey]bool)
+
+			// 总流量统计（用于显示汇总）
+			var totalDeltaBytes, totalDeltaPackets uint64
+
 			iter := objs.Flows.Iterate()
 			var k FlowKey
 			var v FlowStats
 			for iter.Next(&k, &v) {
+				// 标记为活跃流
+				activeFlows[k] = true
 				// 过滤无效流量：跳过 src_ip 和 dst_ip 都为 0 的数据
 				if k.SrcIP == 0 && k.DstIP == 0 {
 					continue
@@ -87,9 +106,42 @@ loop:
 					continue
 				}
 
+				// 计算增量流量
+				var deltaPackets, deltaBytes uint64
+				if last, exists := lastStats[k]; exists {
+					// 计算增量（处理可能的计数器回绕）
+					if v.Packets >= last.Packets {
+						deltaPackets = v.Packets - last.Packets
+					} else {
+						// 计数器回绕，使用当前值
+						deltaPackets = v.Packets
+					}
+					if v.Bytes >= last.Bytes {
+						deltaBytes = v.Bytes - last.Bytes
+					} else {
+						// 计数器回绕，使用当前值
+						deltaBytes = v.Bytes
+					}
+				} else {
+					// 第一次看到这个流，使用当前值
+					deltaPackets = v.Packets
+					deltaBytes = v.Bytes
+				}
+
+				// 保存当前统计用于下次计算
+				lastStats[k] = v
+
+				// 累加到总流量
+				totalDeltaBytes += deltaBytes
+				totalDeltaPackets += deltaPackets
+
 				// 端口号需要从网络字节序转换回主机字节序来显示
 				srcPort := binary.BigEndian.Uint16([]byte{byte(k.SrcPort >> 8), byte(k.SrcPort)})
 				dstPort := binary.BigEndian.Uint16([]byte{byte(k.DstPort >> 8), byte(k.DstPort)})
+
+				// 计算速率（用于metrics和显示）
+				bytesPerSec := float64(deltaBytes) / intervalSeconds
+				bitsPerSec := bytesPerSec * 8
 
 				// 更新 VictoriaMetrics metrics（如果启用）
 				if metricsEnabled {
@@ -112,10 +164,17 @@ loop:
 						"collect_agg":  collectAgg,
 					}
 
-					networkBytesTotal.With(labels).Add(float64(v.Bytes))
-					networkPacketsTotal.With(labels).Add(float64(v.Packets))
-					networkFlowBytes.With(labels).Set(float64(v.Bytes))
-					networkFlowPackets.With(labels).Set(float64(v.Packets))
+					// 使用 Gauge 设置当前流量（每个流的增量值）
+					networkFlowBytes.With(labels).Set(float64(deltaBytes))
+					networkFlowPackets.With(labels).Set(float64(deltaPackets))
+
+					// 速率指标（与 node_exporter irate 兼容）
+					networkFlowBytesRate.With(labels).Set(bytesPerSec)
+					networkFlowBitsRate.With(labels).Set(bitsPerSec)
+
+					// 同时使用 Counter 累加总流量
+					networkBytesTotal.With(labels).Add(float64(deltaBytes))
+					networkPacketsTotal.With(labels).Add(float64(deltaPackets))
 				}
 
 				// 识别流量类型
@@ -142,14 +201,27 @@ loop:
 					}
 				}
 
-				// 打印流量信息
-				fmt.Printf("%s:%d -> %s:%d proto=%d%s packets=%d bytes=%d host_ip=%s\n",
-					ipToStr(k.SrcIP), srcPort,
-					ipToStr(k.DstIP), dstPort,
-					k.Proto, trafficType, v.Packets, v.Bytes, hostIP)
+				// 只显示有实际流量的记录（跳过增量为0的）
+				if deltaPackets > 0 {
+					mbps := bitsPerSec / 1000000 // Mbps
+
+					// 打印流量信息（增量值 + 速率）
+					fmt.Printf("%s:%d -> %s:%d proto=%d%s packets=%d bytes=%d (%.2f MB/s, %.2f Mbps) host_ip=%s\n",
+						ipToStr(k.SrcIP), srcPort,
+						ipToStr(k.DstIP), dstPort,
+						k.Proto, trafficType, deltaPackets, deltaBytes,
+						bytesPerSec/1024/1024, mbps, hostIP)
+				}
 			}
 			if err := iter.Err(); err != nil {
 				log.Printf("iter error: %v", err)
+			}
+
+			// 清理不活跃的流（不在当前 BPF map 中的流）
+			for key := range lastStats {
+				if !activeFlows[key] {
+					delete(lastStats, key)
+				}
 			}
 
 			// 推送 metrics 到 VictoriaMetrics
@@ -157,6 +229,12 @@ loop:
 				if err := pushMetricsToVictoriaMetrics(); err != nil {
 					log.Printf("推送 VictoriaMetrics metrics 失败: %v", err)
 				}
+
+				// 推送后重置 Gauge，避免旧值残留
+				networkFlowBytes.Reset()
+				networkFlowPackets.Reset()
+				networkFlowBytesRate.Reset()
+				networkFlowBitsRate.Reset()
 			}
 		case <-stop:
 			break loop

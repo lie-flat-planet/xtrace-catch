@@ -22,14 +22,16 @@ import (
 
 // VictoriaMetrics metrics (全局变量)
 var (
-	metricsEnabled      bool
-	vmRemoteWriteURL    string
-	vmRegistry          *prometheus.Registry
-	networkBytesTotal   *prometheus.CounterVec
-	networkPacketsTotal *prometheus.CounterVec
-	networkFlowBytes    *prometheus.GaugeVec
-	networkFlowPackets  *prometheus.GaugeVec
-	collectAgg          string // 算网标签
+	metricsEnabled       bool
+	vmRemoteWriteURL     string
+	vmRegistry           *prometheus.Registry
+	networkBytesTotal    *prometheus.CounterVec
+	networkPacketsTotal  *prometheus.CounterVec
+	networkFlowBytes     *prometheus.GaugeVec
+	networkFlowPackets   *prometheus.GaugeVec
+	networkFlowBytesRate *prometheus.GaugeVec // bytes/s 速率
+	networkFlowBitsRate  *prometheus.GaugeVec // bits/s 速率（Mbps）
+	collectAgg           string               // 算网标签
 )
 
 // 初始化 VictoriaMetrics metrics
@@ -69,11 +71,29 @@ func initVictoriaMetrics(remoteWriteURL string) {
 		[]string{"src_ip", "dst_ip", "src_port", "dst_port", "protocol", "traffic_type", "interface", "host_ip", "collect_agg"},
 	)
 
+	networkFlowBytesRate = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "xtrace_network_flow_bytes_rate",
+			Help: "Network flow rate in bytes per second (compatible with node_exporter irate)",
+		},
+		[]string{"src_ip", "dst_ip", "src_port", "dst_port", "protocol", "traffic_type", "interface", "host_ip", "collect_agg"},
+	)
+
+	networkFlowBitsRate = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "xtrace_network_flow_bits_rate",
+			Help: "Network flow rate in bits per second (Mbps when divided by 1e6)",
+		},
+		[]string{"src_ip", "dst_ip", "src_port", "dst_port", "protocol", "traffic_type", "interface", "host_ip", "collect_agg"},
+	)
+
 	// 注册 metrics 到独立的 registry
 	vmRegistry.MustRegister(networkBytesTotal)
 	vmRegistry.MustRegister(networkPacketsTotal)
 	vmRegistry.MustRegister(networkFlowBytes)
 	vmRegistry.MustRegister(networkFlowPackets)
+	vmRegistry.MustRegister(networkFlowBytesRate)
+	vmRegistry.MustRegister(networkFlowBitsRate)
 
 	vmRemoteWriteURL = remoteWriteURL
 
