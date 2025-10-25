@@ -25,11 +25,13 @@ struct flow_key {
     __u8  proto;
     __u8  pkt_len_low;  // 包长度低8位
     __u16 first_u16;    // 前2个字节（可能是类型/长度）
+    __u32 padding;      // 填充字段，保持结构对齐
 };
 
 struct flow_stats {
     __u64 packets;
     __u64 bytes;
+    __u64 last_update; // 最后更新时间（纳秒），用于检测陈旧条目
 };
 
 struct {
@@ -84,6 +86,7 @@ parse_ip:
         key.src_ip = ip->saddr;
         key.dst_ip = ip->daddr;
         key.proto = ip->protocol;
+        key.padding = 0;
 
         if (ip->protocol == IPPROTO_TCP || ip->protocol == IPPROTO_UDP) {
             struct tcphdr *tcp = (void *)ip + ip->ihl * 4;
@@ -101,13 +104,25 @@ parse_ip:
             }
         }
 
+        // 获取当前时间戳（纳秒）
+        __u64 current_time = bpf_ktime_get_ns();
+
+        // 计算完整的包大小（包含 L2 层开销）
+        // 这样统计的结果与 node_exporter 一致
+        // data_end - data = 完整包长（包括 L2 头部、IP 数据、可能的填充等）
+        __u64 bytes_to_count = data_end - data;
+
+        // 查找或创建流统计
         struct flow_stats *val = bpf_map_lookup_elem(&flows, &key);
         if (!val) {
-            struct flow_stats init = {1, data_end - data};
+            // 新流，直接创建
+            struct flow_stats init = {1, bytes_to_count, current_time};
             bpf_map_update_elem(&flows, &key, &init, BPF_ANY);
         } else {
+            // 累积统计
             __sync_fetch_and_add(&val->packets, 1);
-            __sync_fetch_and_add(&val->bytes, data_end - data);
+            __sync_fetch_and_add(&val->bytes, bytes_to_count);
+            val->last_update = current_time;
         }
         return XDP_PASS;
     }
@@ -123,19 +138,23 @@ handle_other:
         key.dst_port = 0;
         key.pkt_len_low = (data_end - data) & 0xFF;  // 包长度低8位
         key.first_u16 = 0;
+        key.padding = 0;
         
         // 读取前2个字节
         if (data + 2 <= data_end) {
             key.first_u16 = *((__u16 *)data);
         }
 
+        __u64 current_time = bpf_ktime_get_ns();
+        
         struct flow_stats *val = bpf_map_lookup_elem(&flows, &key);
         if (!val) {
-            struct flow_stats init = {1, data_end - data};
+            struct flow_stats init = {1, data_end - data, current_time};
             bpf_map_update_elem(&flows, &key, &init, BPF_ANY);
         } else {
             __sync_fetch_and_add(&val->packets, 1);
             __sync_fetch_and_add(&val->bytes, data_end - data);
+            val->last_update = current_time;
         }
     }
     

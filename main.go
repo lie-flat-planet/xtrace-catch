@@ -21,11 +21,13 @@ type FlowKey struct {
 	Proto     uint8
 	PktLenLow uint8  // 包长度低8位
 	FirstU16  uint16 // 前2个字节
+	Padding   uint32 // 填充字段，保持结构对齐
 }
 
 type FlowStats struct {
-	Packets uint64
-	Bytes   uint64
+	Packets    uint64
+	Bytes      uint64
+	LastUpdate uint64 // 最后更新时间（纳秒）
 }
 
 // 将 IP 地址从 uint32 转换为字符串
@@ -134,6 +136,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "\n其他选项:\n")
 		fmt.Fprintf(os.Stderr, "  --exclude-dns     排除DNS流量（过滤223.5.5.5等常见DNS服务器）\n")
 		fmt.Fprintf(os.Stderr, "  -t, --interval    数据采集和推送间隔（毫秒），默认5000ms，范围100-3600000\n")
+		fmt.Fprintf(os.Stderr, "\n注意: 流量统计默认包含完整包长（含L2层开销），与node_exporter统计方式一致\n")
 		fmt.Fprintf(os.Stderr, "\n示例:\n")
 		fmt.Fprintf(os.Stderr, "  %s -i eth0                        # XDP模式监控 eth0 接口\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s -i eth0 -m tc -d egress        # TC模式监控出口流量\n", os.Args[0])
