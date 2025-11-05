@@ -9,14 +9,12 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"strconv"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
-	"github.com/prometheus/client_golang/prometheus"
 )
 
 // 多接口监控模式
@@ -77,6 +75,8 @@ func startMultiInterfaceMonitor(interfaces []string, filter string, excludeDNS b
 						// 推送后重置 Gauge，避免旧值残留
 						networkFlowBytesRate.Reset()
 						networkFlowBitsRate.Reset()
+						networkNICBytesRate.Reset()
+						networkNICBitsRate.Reset()
 
 						// 重置计数器，等待下一轮采集
 						collectedCount = 0
@@ -156,6 +156,9 @@ loop:
 			// 记录本次采集中活跃的流
 			activeFlows := make(map[FlowKey]bool)
 
+			// 用于累加 NIC 的速率（按接口聚合所有流量）
+			nicRates := newNICRates()
+
 			iter := objs.Flows.Iterate()
 			var k FlowKey
 			var v FlowStats
@@ -179,18 +182,20 @@ loop:
 
 				// 计算增量流量
 				last, exists := lastStats[k]
-				deltaPackets, deltaBytes := calculateDelta(v, last, exists)
+				deltaPackets, deltaBytes := v.CalculateDelta(last, exists)
 				lastStats[k] = v
 
 				// 端口号转换和速率计算
-				srcPort, dstPort := convertPorts(k.SrcPort, k.DstPort)
-				bytesPerSec, bitsPerSec := calculateRates(deltaBytes, intervalSeconds)
-				trafficTypeStr := getTrafficType(k.Proto, k.SrcPort, k.DstPort)
+				srcPort, dstPort := k.ConvertPorts()
+				bytesPerSec, bitsPerSec := CalculateRates(deltaBytes, intervalSeconds)
+				trafficTypeStr := k.GetTrafficType()
 
 				// 更新 VictoriaMetrics metrics（如果启用）
 				if metricsEnabled {
-					updateMetrics(k, srcPort, dstPort, trafficTypeStr, deltaBytes, deltaPackets,
-						bytesPerSec, bitsPerSec, iface, hostIP)
+					k.UpdateMetrics(srcPort, dstPort, trafficTypeStr, bytesPerSec, bitsPerSec, iface, hostIP)
+
+					// 添加 NIC 速率（按 IP 对聚合，不包含端口）
+					nicRates.Add(k.SrcIP, k.DstIP, k.Proto, bytesPerSec, bitsPerSec, trafficTypeStr)
 				}
 
 				// 转换为显示格式
@@ -217,6 +222,11 @@ loop:
 				if !activeFlows[key] {
 					delete(lastStats, key)
 				}
+			}
+
+			// 更新 NIC 速率 metrics（累加后的结果）
+			if metricsEnabled {
+				nicRates.UpdateMetrics(iface, hostIP)
 			}
 
 			// 通知采集完成（如果启用了 metrics）
@@ -312,70 +322,6 @@ func isDNSTraffic(dstIP uint32) bool {
 	}
 
 	return false
-}
-
-// 计算流量增量（处理计数器回绕）
-func calculateDelta(current, last FlowStats, exists bool) (deltaPackets, deltaBytes uint64) {
-	if exists {
-		// 计算增量（处理可能的计数器回绕）
-		if current.Packets >= last.Packets {
-			deltaPackets = current.Packets - last.Packets
-		} else {
-			// 计数器回绕，使用当前值
-			deltaPackets = current.Packets
-		}
-		if current.Bytes >= last.Bytes {
-			deltaBytes = current.Bytes - last.Bytes
-		} else {
-			// 计数器回绕，使用当前值
-			deltaBytes = current.Bytes
-		}
-	} else {
-		// 第一次看到这个流，使用当前值
-		deltaPackets = current.Packets
-		deltaBytes = current.Bytes
-	}
-
-	return deltaPackets, deltaBytes
-}
-
-// 转换端口号从网络字节序到主机字节序
-func convertPorts(srcPort, dstPort uint16) (uint16, uint16) {
-	src := binary.BigEndian.Uint16([]byte{byte(srcPort >> 8), byte(srcPort)})
-	dst := binary.BigEndian.Uint16([]byte{byte(dstPort >> 8), byte(dstPort)})
-	return src, dst
-}
-
-// 计算流量速率
-func calculateRates(deltaBytes uint64, intervalSeconds float64) (bytesPerSec, bitsPerSec float64) {
-	bytesPerSec = float64(deltaBytes) / intervalSeconds
-	bitsPerSec = bytesPerSec * 8
-	return bytesPerSec, bitsPerSec
-}
-
-// 更新 VictoriaMetrics metrics
-func updateMetrics(k FlowKey, srcPort, dstPort uint16, trafficType string,
-	deltaBytes, deltaPackets uint64, bytesPerSec, bitsPerSec float64, iface, hostIP string) {
-
-	labels := prometheus.Labels{
-		"src_ip":       ipToStr(k.SrcIP),
-		"dst_ip":       ipToStr(k.DstIP),
-		"src_port":     strconv.Itoa(int(srcPort)),
-		"dst_port":     strconv.Itoa(int(dstPort)),
-		"protocol":     strconv.Itoa(int(k.Proto)),
-		"traffic_type": trafficType,
-		"interface":    iface,
-		"host_ip":      hostIP,
-		"collect_agg":  collectAgg,
-	}
-
-	// 速率指标（与 node_exporter irate 兼容）
-	networkFlowBytesRate.With(labels).Set(bytesPerSec)
-	networkFlowBitsRate.With(labels).Set(bitsPerSec)
-
-	// Counter 累加总流量
-	networkBytesTotal.With(labels).Add(float64(deltaBytes))
-	networkPacketsTotal.With(labels).Add(float64(deltaPackets))
 }
 
 // 格式化流量类型用于显示（添加方括号和空格）

@@ -4,7 +4,6 @@
 package main
 
 import (
-	"encoding/binary"
 	"flag"
 	"fmt"
 	"log"
@@ -12,31 +11,6 @@ import (
 	"os"
 	"strings"
 )
-
-// FlowKey 和 FlowStats 结构体定义
-type FlowKey struct {
-	SrcIP     uint32
-	DstIP     uint32
-	SrcPort   uint16
-	DstPort   uint16
-	Proto     uint8
-	PktLenLow uint8  // 包长度低8位
-	FirstU16  uint16 // 前2个字节
-	Padding   uint32 // 填充字段，保持结构对齐
-}
-
-type FlowStats struct {
-	Packets    uint64
-	Bytes      uint64
-	LastUpdate uint64 // 最后更新时间（纳秒）
-}
-
-// 将 IP 地址从 uint32 转换为字符串
-func ipToStr(ip uint32) string {
-	b := make([]byte, 4)
-	binary.LittleEndian.PutUint32(b, ip)
-	return net.IPv4(b[0], b[1], b[2], b[3]).String()
-}
 
 // 获取主机IP地址（获取第一个非环回的IPv4地址）
 func getHostIP() string {

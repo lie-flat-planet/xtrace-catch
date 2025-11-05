@@ -25,10 +25,10 @@ $(BPF_OBJ): xdp_monitor.c
 	@echo "编译 eBPF 程序..."
 	$(CLANG) -O2 -target bpf -c xdp_monitor.c -o $(BPF_OBJ)
 
-# 编译 Go 程序
-$(PROGRAM): $(BPF_OBJ) main.go xdp_monitor.go metrics.go
+# 编译 Go 程序（依赖所有 .go 文件）
+$(PROGRAM): $(BPF_OBJ) *.go
 	@echo "编译 Go 程序..."
-	$(GO) build -o $(PROGRAM) main.go xdp_monitor.go metrics.go
+	$(GO) build -o $(PROGRAM) .
 
 # 构建程序
 build: $(PROGRAM) ## 编译程序

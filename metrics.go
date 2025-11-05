@@ -20,18 +20,15 @@ import (
 	"github.com/prometheus/prometheus/prompb"
 )
 
-// RoCE v2 使用的 UDP 端口（网络字节序：4791 = 0xb712）
-const roceV2Port = uint16(0xb712)
-
 // VictoriaMetrics metrics (全局变量)
 var (
 	metricsEnabled       bool
 	vmRemoteWriteURL     string
 	vmRegistry           *prometheus.Registry
-	networkBytesTotal    *prometheus.CounterVec
-	networkPacketsTotal  *prometheus.CounterVec
 	networkFlowBytesRate *prometheus.GaugeVec // bytes/s 速率
 	networkFlowBitsRate  *prometheus.GaugeVec // bits/s 速率（Mbps）
+	networkNICBytesRate  *prometheus.GaugeVec // NIC网卡的速率 bytes/s
+	networkNICBitsRate   *prometheus.GaugeVec // NIC网卡的速率 bits/s
 	collectAgg           string               // 算网标签
 )
 
@@ -39,22 +36,6 @@ var (
 func initVictoriaMetrics(remoteWriteURL string) {
 	// 创建独立的 registry
 	vmRegistry = prometheus.NewRegistry()
-
-	networkBytesTotal = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "xtrace_network_bytes_total",
-			Help: "Total network traffic in bytes",
-		},
-		[]string{"src_ip", "dst_ip", "src_port", "dst_port", "protocol", "traffic_type", "interface", "host_ip", "collect_agg"},
-	)
-
-	networkPacketsTotal = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "xtrace_network_packets_total",
-			Help: "Total network packets",
-		},
-		[]string{"src_ip", "dst_ip", "src_port", "dst_port", "protocol", "traffic_type", "interface", "host_ip", "collect_agg"},
-	)
 
 	networkFlowBytesRate = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
@@ -72,11 +53,27 @@ func initVictoriaMetrics(remoteWriteURL string) {
 		[]string{"src_ip", "dst_ip", "src_port", "dst_port", "protocol", "traffic_type", "interface", "host_ip", "collect_agg"},
 	)
 
+	networkNICBytesRate = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "xtrace_network_nic_bytes_rate",
+			Help: "Network traffic rate per NIC interface in bytes per second (aggregated by IP pair)",
+		},
+		[]string{"interface", "src_ip", "dst_ip", "protocol", "traffic_type", "host_ip", "collect_agg"},
+	)
+
+	networkNICBitsRate = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "xtrace_network_nic_bits_rate",
+			Help: "Network traffic rate per NIC interface in bits per second (aggregated by IP pair)",
+		},
+		[]string{"interface", "src_ip", "dst_ip", "protocol", "traffic_type", "host_ip", "collect_agg"},
+	)
+
 	// 注册 metrics 到独立的 registry
-	vmRegistry.MustRegister(networkBytesTotal)
-	vmRegistry.MustRegister(networkPacketsTotal)
 	vmRegistry.MustRegister(networkFlowBytesRate)
 	vmRegistry.MustRegister(networkFlowBitsRate)
+	vmRegistry.MustRegister(networkNICBytesRate)
+	vmRegistry.MustRegister(networkNICBitsRate)
 
 	vmRemoteWriteURL = remoteWriteURL
 
@@ -216,25 +213,4 @@ func createRemoteWriteRequest(metricsFamilies []*dto.MetricFamily) (*http.Reques
 	req.Header.Set("X-Prometheus-Remote-Write-Version", "0.1.0")
 
 	return req, nil
-}
-
-// 获取流量类型字符串
-func getTrafficType(proto uint8, srcPort, dstPort uint16) string {
-	switch proto {
-	case 0xFE:
-		return "RoCE_v2"
-	case 6:
-		return "TCP"
-	case 17:
-		if srcPort == roceV2Port || dstPort == roceV2Port {
-			return "RoCE_v2_UDP"
-		}
-		return "UDP"
-	case 0x15:
-		return "RoCE_v1_IBoE"
-	case 0x14:
-		return "InfiniBand"
-	default:
-		return "Other"
-	}
 }
