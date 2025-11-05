@@ -178,87 +178,23 @@ loop:
 				}
 
 				// 计算增量流量
-				var deltaPackets, deltaBytes uint64
-				if last, exists := lastStats[k]; exists {
-					// 计算增量（处理可能的计数器回绕）
-					if v.Packets >= last.Packets {
-						deltaPackets = v.Packets - last.Packets
-					} else {
-						// 计数器回绕，使用当前值
-						deltaPackets = v.Packets
-					}
-					if v.Bytes >= last.Bytes {
-						deltaBytes = v.Bytes - last.Bytes
-					} else {
-						// 计数器回绕，使用当前值
-						deltaBytes = v.Bytes
-					}
-				} else {
-					// 第一次看到这个流，使用当前值
-					deltaPackets = v.Packets
-					deltaBytes = v.Bytes
-				}
-
-				// 保存当前统计用于下次计算
+				last, exists := lastStats[k]
+				deltaPackets, deltaBytes := calculateDelta(v, last, exists)
 				lastStats[k] = v
 
-				// 端口号需要从网络字节序转换回主机字节序来显示
-				srcPort := binary.BigEndian.Uint16([]byte{byte(k.SrcPort >> 8), byte(k.SrcPort)})
-				dstPort := binary.BigEndian.Uint16([]byte{byte(k.DstPort >> 8), byte(k.DstPort)})
-
-				// 计算速率（用于metrics和显示）
-				bytesPerSec := float64(deltaBytes) / intervalSeconds
-				bitsPerSec := bytesPerSec * 8
-
-				// 识别流量类型（复用 getTrafficType 函数，只调用一次）
+				// 端口号转换和速率计算
+				srcPort, dstPort := convertPorts(k.SrcPort, k.DstPort)
+				bytesPerSec, bitsPerSec := calculateRates(deltaBytes, intervalSeconds)
 				trafficTypeStr := getTrafficType(k.Proto, k.SrcPort, k.DstPort)
 
 				// 更新 VictoriaMetrics metrics（如果启用）
 				if metricsEnabled {
-					srcIPStr := ipToStr(k.SrcIP)
-					dstIPStr := ipToStr(k.DstIP)
-					srcPortStr := strconv.Itoa(int(srcPort))
-					dstPortStr := strconv.Itoa(int(dstPort))
-					protoStr := strconv.Itoa(int(k.Proto))
-
-					labels := prometheus.Labels{
-						"src_ip":       srcIPStr,
-						"dst_ip":       dstIPStr,
-						"src_port":     srcPortStr,
-						"dst_port":     dstPortStr,
-						"protocol":     protoStr,
-						"traffic_type": trafficTypeStr,
-						"interface":    iface,
-						"host_ip":      hostIP,
-						"collect_agg":  collectAgg,
-					}
-
-					// 速率指标（与 node_exporter irate 兼容）
-					networkFlowBytesRate.With(labels).Set(bytesPerSec)
-					networkFlowBitsRate.With(labels).Set(bitsPerSec)
-
-					// 同时使用 Counter 累加总流量
-					networkBytesTotal.With(labels).Add(float64(deltaBytes))
-					networkPacketsTotal.With(labels).Add(float64(deltaPackets))
+					updateMetrics(k, srcPort, dstPort, trafficTypeStr, deltaBytes, deltaPackets,
+						bytesPerSec, bitsPerSec, iface, hostIP)
 				}
-				// 转换为显示格式（添加方括号和空格）
-				var trafficType string
-				switch trafficTypeStr {
-				case "RoCE_v2":
-					trafficType = " [RoCE v2]"
-				case "RoCE_v2_UDP":
-					trafficType = " [RoCE v2/UDP]"
-				case "TCP":
-					trafficType = " [TCP]"
-				case "UDP":
-					trafficType = " [UDP]"
-				case "RoCE_v1_IBoE":
-					trafficType = " [RoCE v1/IBoE]"
-				case "InfiniBand":
-					trafficType = " [InfiniBand]"
-				default:
-					trafficType = " [Other]"
-				}
+
+				// 转换为显示格式
+				trafficType := formatTrafficType(trafficTypeStr)
 
 				// 只显示有实际流量的记录（跳过增量为0的）
 				if deltaPackets > 0 {
@@ -376,4 +312,88 @@ func isDNSTraffic(dstIP uint32) bool {
 	}
 
 	return false
+}
+
+// 计算流量增量（处理计数器回绕）
+func calculateDelta(current, last FlowStats, exists bool) (deltaPackets, deltaBytes uint64) {
+	if exists {
+		// 计算增量（处理可能的计数器回绕）
+		if current.Packets >= last.Packets {
+			deltaPackets = current.Packets - last.Packets
+		} else {
+			// 计数器回绕，使用当前值
+			deltaPackets = current.Packets
+		}
+		if current.Bytes >= last.Bytes {
+			deltaBytes = current.Bytes - last.Bytes
+		} else {
+			// 计数器回绕，使用当前值
+			deltaBytes = current.Bytes
+		}
+	} else {
+		// 第一次看到这个流，使用当前值
+		deltaPackets = current.Packets
+		deltaBytes = current.Bytes
+	}
+
+	return deltaPackets, deltaBytes
+}
+
+// 转换端口号从网络字节序到主机字节序
+func convertPorts(srcPort, dstPort uint16) (uint16, uint16) {
+	src := binary.BigEndian.Uint16([]byte{byte(srcPort >> 8), byte(srcPort)})
+	dst := binary.BigEndian.Uint16([]byte{byte(dstPort >> 8), byte(dstPort)})
+	return src, dst
+}
+
+// 计算流量速率
+func calculateRates(deltaBytes uint64, intervalSeconds float64) (bytesPerSec, bitsPerSec float64) {
+	bytesPerSec = float64(deltaBytes) / intervalSeconds
+	bitsPerSec = bytesPerSec * 8
+	return bytesPerSec, bitsPerSec
+}
+
+// 更新 VictoriaMetrics metrics
+func updateMetrics(k FlowKey, srcPort, dstPort uint16, trafficType string,
+	deltaBytes, deltaPackets uint64, bytesPerSec, bitsPerSec float64, iface, hostIP string) {
+
+	labels := prometheus.Labels{
+		"src_ip":       ipToStr(k.SrcIP),
+		"dst_ip":       ipToStr(k.DstIP),
+		"src_port":     strconv.Itoa(int(srcPort)),
+		"dst_port":     strconv.Itoa(int(dstPort)),
+		"protocol":     strconv.Itoa(int(k.Proto)),
+		"traffic_type": trafficType,
+		"interface":    iface,
+		"host_ip":      hostIP,
+		"collect_agg":  collectAgg,
+	}
+
+	// 速率指标（与 node_exporter irate 兼容）
+	networkFlowBytesRate.With(labels).Set(bytesPerSec)
+	networkFlowBitsRate.With(labels).Set(bitsPerSec)
+
+	// Counter 累加总流量
+	networkBytesTotal.With(labels).Add(float64(deltaBytes))
+	networkPacketsTotal.With(labels).Add(float64(deltaPackets))
+}
+
+// 格式化流量类型用于显示（添加方括号和空格）
+func formatTrafficType(trafficType string) string {
+	switch trafficType {
+	case "RoCE_v2":
+		return " [RoCE v2]"
+	case "RoCE_v2_UDP":
+		return " [RoCE v2/UDP]"
+	case "TCP":
+		return " [TCP]"
+	case "UDP":
+		return " [UDP]"
+	case "RoCE_v1_IBoE":
+		return " [RoCE v1/IBoE]"
+	case "InfiniBand":
+		return " [InfiniBand]"
+	default:
+		return " [Other]"
+	}
 }
