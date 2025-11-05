@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
@@ -18,8 +19,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-// XDP 监控模式
-func startXDPMonitor(iface string, filter string, excludeDNS bool, intervalMs int, countL2 bool) {
+// 多接口监控模式
+func startMultiInterfaceMonitor(interfaces []string, filter string, excludeDNS bool, intervalMs int) {
 	filterMsg := ""
 	if filter != "" && filter != "all" {
 		filterMsg = fmt.Sprintf("，过滤: %s", filter)
@@ -27,14 +28,89 @@ func startXDPMonitor(iface string, filter string, excludeDNS bool, intervalMs in
 
 	// 获取主机IP地址
 	hostIP := getHostIP()
-	log.Printf("启动 XDP 监控模式，网络接口: %s，主机IP: %s，采集间隔: %dms%s", iface, hostIP, intervalMs, filterMsg)
+	log.Printf("启动多接口 XDP 监控模式，接口数量: %d，主机IP: %s，采集间隔: %dms%s", len(interfaces), hostIP, intervalMs, filterMsg)
+	log.Printf("监控接口列表: %v", interfaces)
+
+	// 捕获 Ctrl+C 退出
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+
+	// 用于等待所有 goroutine 完成
+	var wg sync.WaitGroup
+
+	// 用于同步采集完成，通知推送 goroutine
+	// buffer 设置为 len(interfaces)*2，避免短暂阻塞
+	var collectDone chan struct{}
+	if metricsEnabled {
+		collectDone = make(chan struct{}, len(interfaces)*2)
+	}
+
+	// 为每个接口启动独立的监控 goroutine
+	for _, iface := range interfaces {
+		wg.Add(1)
+		go func(interfaceName string) {
+			defer wg.Done()
+			monitorInterface(interfaceName, filter, excludeDNS, intervalMs, stop, collectDone)
+		}(iface)
+	}
+
+	// 如果启用了 metrics，启动统一的推送 goroutine
+	if metricsEnabled {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// 持续等待所有采集 goroutine 完成采集并推送
+			// 注意：各接口的采集 ticker 独立，存在微小时序差异（通常<100ms）
+			// 这对 Counter 类型无影响，对 Gauge 类型影响可忽略
+			collectedCount := 0
+			for {
+				select {
+				case <-collectDone:
+					collectedCount++
+					// 收到所有接口的采集完成信号后推送
+					if collectedCount >= len(interfaces) {
+						// 所有接口采集完成，统一推送所有接口的 metrics
+						if err := pushMetricsToVictoriaMetrics(); err != nil {
+							log.Printf("推送 VictoriaMetrics metrics 失败: %v", err)
+						}
+
+						// 推送后重置 Gauge，避免旧值残留
+						networkFlowBytesRate.Reset()
+						networkFlowBitsRate.Reset()
+
+						// 重置计数器，等待下一轮采集
+						collectedCount = 0
+					}
+				case <-stop:
+					return
+				}
+			}
+		}()
+	}
+
+	// 等待所有 goroutine 完成
+	wg.Wait()
+	log.Printf("所有接口监控已停止")
+}
+
+// 核心监控函数
+func monitorInterface(iface string, filter string, excludeDNS bool, intervalMs int, stopChan chan os.Signal, collectDone chan struct{}) {
+	filterMsg := ""
+	if filter != "" && filter != "all" {
+		filterMsg = fmt.Sprintf("，过滤: %s", filter)
+	}
+
+	// 获取主机IP地址
+	hostIP := getHostIP()
+	log.Printf("[%s] 启动 XDP 监控，主机IP: %s，采集间隔: %dms%s", iface, hostIP, intervalMs, filterMsg)
 
 	// 用于保存上次统计数据的map
 	lastStats := make(map[FlowKey]FlowStats)
 
 	spec, err := ebpf.LoadCollectionSpec("xdp_monitor.o")
 	if err != nil {
-		log.Fatalf("failed to load spec: %v", err)
+		log.Printf("[%s] 加载 eBPF 规范失败: %v，跳过该接口", iface, err)
+		return
 	}
 
 	objs := struct {
@@ -42,7 +118,8 @@ func startXDPMonitor(iface string, filter string, excludeDNS bool, intervalMs in
 		Flows      *ebpf.Map     `ebpf:"flows"`
 	}{}
 	if err := spec.LoadAndAssign(&objs, nil); err != nil {
-		log.Fatalf("failed to load objects: %v", err)
+		log.Printf("[%s] 加载 eBPF 对象失败: %v，跳过该接口", iface, err)
+		return
 	}
 	defer objs.XdpMonitor.Close()
 	defer objs.Flows.Close()
@@ -52,15 +129,12 @@ func startXDPMonitor(iface string, filter string, excludeDNS bool, intervalMs in
 		Interface: ifaceIndex(iface),
 	})
 	if err != nil {
-		log.Fatalf("failed to attach XDP: %v", err)
+		log.Printf("[%s] 附加 XDP 程序失败: %v，跳过该接口", iface, err)
+		return
 	}
 	defer linkRef.Close()
 
-	log.Printf("XDP program loaded on %s", iface)
-
-	// 捕获 Ctrl+C 退出
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	log.Printf("[%s] XDP program loaded", iface)
 
 	// 将毫秒转换为 Duration
 	duration := time.Duration(intervalMs) * time.Millisecond
@@ -81,9 +155,6 @@ loop:
 
 			// 记录本次采集中活跃的流
 			activeFlows := make(map[FlowKey]bool)
-
-			// 总流量统计（用于显示汇总）
-			var totalDeltaBytes, totalDeltaPackets uint64
 
 			iter := objs.Flows.Iterate()
 			var k FlowKey
@@ -131,10 +202,6 @@ loop:
 				// 保存当前统计用于下次计算
 				lastStats[k] = v
 
-				// 累加到总流量
-				totalDeltaBytes += deltaBytes
-				totalDeltaPackets += deltaPackets
-
 				// 端口号需要从网络字节序转换回主机字节序来显示
 				srcPort := binary.BigEndian.Uint16([]byte{byte(k.SrcPort >> 8), byte(k.SrcPort)})
 				dstPort := binary.BigEndian.Uint16([]byte{byte(k.DstPort >> 8), byte(k.DstPort)})
@@ -143,6 +210,9 @@ loop:
 				bytesPerSec := float64(deltaBytes) / intervalSeconds
 				bitsPerSec := bytesPerSec * 8
 
+				// 识别流量类型（复用 getTrafficType 函数，只调用一次）
+				trafficTypeStr := getTrafficType(k.Proto, k.SrcPort, k.DstPort)
+
 				// 更新 VictoriaMetrics metrics（如果启用）
 				if metricsEnabled {
 					srcIPStr := ipToStr(k.SrcIP)
@@ -150,7 +220,6 @@ loop:
 					srcPortStr := strconv.Itoa(int(srcPort))
 					dstPortStr := strconv.Itoa(int(dstPort))
 					protoStr := strconv.Itoa(int(k.Proto))
-					trafficTypeStr := getTrafficType(k.Proto, k.SrcPort, k.DstPort)
 
 					labels := prometheus.Labels{
 						"src_ip":       srcIPStr,
@@ -164,10 +233,6 @@ loop:
 						"collect_agg":  collectAgg,
 					}
 
-					// 使用 Gauge 设置当前流量（每个流的增量值）
-					networkFlowBytes.With(labels).Set(float64(deltaBytes))
-					networkFlowPackets.With(labels).Set(float64(deltaPackets))
-
 					// 速率指标（与 node_exporter irate 兼容）
 					networkFlowBytesRate.With(labels).Set(bytesPerSec)
 					networkFlowBitsRate.With(labels).Set(bitsPerSec)
@@ -176,45 +241,39 @@ loop:
 					networkBytesTotal.With(labels).Add(float64(deltaBytes))
 					networkPacketsTotal.With(labels).Add(float64(deltaPackets))
 				}
-
-				// 识别流量类型
-				rocePort := uint16(0xb712) // 4791 in network byte order
-				trafficType := ""
-				switch k.Proto {
-				case 0xFE:
+				// 转换为显示格式（添加方括号和空格）
+				var trafficType string
+				switch trafficTypeStr {
+				case "RoCE_v2":
 					trafficType = " [RoCE v2]"
-				case 6:
+				case "RoCE_v2_UDP":
+					trafficType = " [RoCE v2/UDP]"
+				case "TCP":
 					trafficType = " [TCP]"
-				case 17:
-					// 检查是否是 RoCE v2 (UDP port 4791)
-					if k.SrcPort == rocePort || k.DstPort == rocePort {
-						trafficType = " [RoCE v2/UDP]"
-					} else {
-						trafficType = " [UDP]"
-					}
+				case "UDP":
+					trafficType = " [UDP]"
+				case "RoCE_v1_IBoE":
+					trafficType = " [RoCE v1/IBoE]"
+				case "InfiniBand":
+					trafficType = " [InfiniBand]"
 				default:
-					// 对于大于 255 的协议值，可能是以太网协议类型
-					if k.Proto == 0x15 { // 0x8915 的低字节
-						trafficType = " [RoCE v1/IBoE]"
-					} else if k.Proto == 0x14 { // 0x8914 的低字节
-						trafficType = " [InfiniBand]"
-					}
+					trafficType = " [Other]"
 				}
 
 				// 只显示有实际流量的记录（跳过增量为0的）
 				if deltaPackets > 0 {
 					mbps := bitsPerSec / 1000000 // Mbps
 
-					// 打印流量信息（增量值 + 速率）
-					fmt.Printf("%s:%d -> %s:%d proto=%d%s packets=%d bytes=%d (%.2f MB/s, %.2f Mbps) host_ip=%s\n",
-						ipToStr(k.SrcIP), srcPort,
+					// 打印流量信息（增量值 + 速率），包含接口名称
+					fmt.Printf("[%s] %s:%d -> %s:%d proto=%d%s packets=%d bytes=%d (%.2f MB/s, %.2f Mbps) host_ip=%s\n",
+						iface, ipToStr(k.SrcIP), srcPort,
 						ipToStr(k.DstIP), dstPort,
 						k.Proto, trafficType, deltaPackets, deltaBytes,
 						bytesPerSec/1024/1024, mbps, hostIP)
 				}
 			}
 			if err := iter.Err(); err != nil {
-				log.Printf("iter error: %v", err)
+				log.Printf("[%s] iter error: %v", iface, err)
 			}
 
 			// 清理不活跃的流（不在当前 BPF map 中的流）
@@ -224,22 +283,32 @@ loop:
 				}
 			}
 
-			// 推送 metrics 到 VictoriaMetrics
-			if metricsEnabled {
-				if err := pushMetricsToVictoriaMetrics(); err != nil {
-					log.Printf("推送 VictoriaMetrics metrics 失败: %v", err)
+			// 通知采集完成（如果启用了 metrics）
+			if metricsEnabled && collectDone != nil {
+				// 使用非阻塞发送，但增加重试机制
+				select {
+				case collectDone <- struct{}{}:
+					// 成功发送采集完成信号
+				default:
+					// channel 已满，异步发送避免阻塞采集
+					go func() {
+						select {
+						case collectDone <- struct{}{}:
+							// 异步发送成功
+						case <-time.After(time.Second):
+							// 超时，说明推送 goroutine 可能已停止
+							log.Printf("[%s] 警告: 采集完成信号发送超时", iface)
+						}
+					}()
 				}
-
-				// 推送后重置 Gauge，避免旧值残留
-				networkFlowBytes.Reset()
-				networkFlowPackets.Reset()
-				networkFlowBytesRate.Reset()
-				networkFlowBitsRate.Reset()
 			}
-		case <-stop:
+		case <-stopChan:
+			log.Printf("[%s] 接收到停止信号，正在关闭监控...", iface)
 			break loop
 		}
 	}
+
+	log.Printf("[%s] XDP 监控已停止", iface)
 }
 
 // 检查是否应该显示该流量（根据过滤条件）
@@ -248,19 +317,17 @@ func shouldDisplayTraffic(proto uint8, srcPort, dstPort uint16, filter string) b
 		return true
 	}
 
-	rocePort := uint16(0xb712) // 4791 in network byte order
-
 	switch filter {
 	case "roce":
 		// 显示所有 RoCE 流量 (v1 + v2)
 		return proto == 0xFE || proto == 0x15 || proto == 0x14 ||
-			(proto == 17 && (srcPort == rocePort || dstPort == rocePort))
+			(proto == 17 && (srcPort == roceV2Port || dstPort == roceV2Port))
 	case "roce_v1":
 		// 仅显示 RoCE v1/IBoE 流量
 		return proto == 0x15 || proto == 0x14
 	case "roce_v2":
 		// 仅显示 RoCE v2 流量
-		return proto == 0xFE || (proto == 17 && (srcPort == rocePort || dstPort == rocePort))
+		return proto == 0xFE || (proto == 17 && (srcPort == roceV2Port || dstPort == roceV2Port))
 	case "tcp":
 		return proto == 6
 	case "udp":

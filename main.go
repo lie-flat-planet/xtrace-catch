@@ -10,6 +10,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"strings"
 )
 
 // FlowKey 和 FlowStats 结构体定义
@@ -94,10 +95,9 @@ func main() {
 	var filterTraffic string
 	var excludeDNS bool
 	var intervalMs int
-	var countL2 bool
 
-	flag.StringVar(&iface, "i", "", "网络接口名称 (例如: eth0, enp0s3)")
-	flag.StringVar(&iface, "interface", "", "网络接口名称 (例如: eth0, enp0s3)")
+	flag.StringVar(&iface, "i", "", "网络接口名称，支持多个接口用逗号分隔 (例如: eth0, eth0,eth1,ib0)")
+	flag.StringVar(&iface, "interface", "", "网络接口名称，支持多个接口用逗号分隔 (例如: eth0, eth0,eth1,ib0)")
 	flag.StringVar(&filterTraffic, "f", "", "过滤流量类型: roce, roce_v1, roce_v2, tcp, udp, ib, all")
 	flag.StringVar(&filterTraffic, "filter", "", "过滤流量类型: roce, roce_v1, roce_v2, tcp, udp, ib, all")
 	flag.BoolVar(&excludeDNS, "exclude-dns", false, "排除DNS流量（过滤常见DNS服务器）")
@@ -127,6 +127,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "\n注意: 流量统计默认包含完整包长（含L2层开销），与node_exporter统计方式一致\n")
 		fmt.Fprintf(os.Stderr, "\n示例:\n")
 		fmt.Fprintf(os.Stderr, "  %s -i eth0                        # 监控 eth0 接口\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -i eth0,eth1                  # 同时监控 eth0 和 eth1 接口\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s -i ibs8f0 -f roce              # 仅显示 RoCE 流量\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s -i ibs8f0 -f roce_v2           # 仅显示 RoCE v2 流量\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s -i eth0 --exclude-dns          # 排除DNS流量\n", os.Args[0])
@@ -165,9 +166,21 @@ func main() {
 		iface = "eth0" // 默认接口
 	}
 
-	// 验证网络接口是否存在
-	if !isValidInterface(iface) {
-		log.Printf("警告: 网络接口 '%s' 可能不存在", iface)
+	// 解析多个接口（逗号分隔）
+	interfaceList := parseInterfaceList(iface)
+	if len(interfaceList) == 0 {
+		log.Fatalf("未指定有效的网络接口")
+	}
+
+	// 验证所有网络接口是否存在
+	var invalidInterfaces []string
+	for _, ifaceName := range interfaceList {
+		if !isValidInterface(ifaceName) {
+			invalidInterfaces = append(invalidInterfaces, ifaceName)
+		}
+	}
+	if len(invalidInterfaces) > 0 {
+		log.Printf("警告: 以下网络接口可能不存在: %v", invalidInterfaces)
 		log.Printf("可用接口列表:")
 		listNetworkInterfaces()
 		log.Fatalf("请使用 -i 参数指定正确的网络接口")
@@ -203,6 +216,24 @@ func main() {
 		log.Fatal("间隔时间不能超过3600000毫秒（1小时）")
 	}
 
-	// 启动 XDP 监控
-	startXDPMonitor(iface, filterTraffic, excludeDNS, intervalMs, countL2)
+	// 启动 XDP 监控（支持多接口，包括单接口）
+	startMultiInterfaceMonitor(interfaceList, filterTraffic, excludeDNS, intervalMs)
+}
+
+// 解析接口列表（逗号分隔）
+func parseInterfaceList(ifaceStr string) []string {
+	if ifaceStr == "" {
+		return nil
+	}
+
+	// 分割并清理空白
+	parts := strings.Split(ifaceStr, ",")
+	var interfaces []string
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			interfaces = append(interfaces, trimmed)
+		}
+	}
+	return interfaces
 }

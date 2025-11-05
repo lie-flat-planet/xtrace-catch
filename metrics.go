@@ -20,6 +20,9 @@ import (
 	"github.com/prometheus/prometheus/prompb"
 )
 
+// RoCE v2 使用的 UDP 端口（网络字节序：4791 = 0xb712）
+const roceV2Port = uint16(0xb712)
+
 // VictoriaMetrics metrics (全局变量)
 var (
 	metricsEnabled       bool
@@ -27,8 +30,6 @@ var (
 	vmRegistry           *prometheus.Registry
 	networkBytesTotal    *prometheus.CounterVec
 	networkPacketsTotal  *prometheus.CounterVec
-	networkFlowBytes     *prometheus.GaugeVec
-	networkFlowPackets   *prometheus.GaugeVec
 	networkFlowBytesRate *prometheus.GaugeVec // bytes/s 速率
 	networkFlowBitsRate  *prometheus.GaugeVec // bits/s 速率（Mbps）
 	collectAgg           string               // 算网标签
@@ -55,22 +56,6 @@ func initVictoriaMetrics(remoteWriteURL string) {
 		[]string{"src_ip", "dst_ip", "src_port", "dst_port", "protocol", "traffic_type", "interface", "host_ip", "collect_agg"},
 	)
 
-	networkFlowBytes = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Name: "xtrace_network_flow_bytes",
-			Help: "Current network flow bytes",
-		},
-		[]string{"src_ip", "dst_ip", "src_port", "dst_port", "protocol", "traffic_type", "interface", "host_ip", "collect_agg"},
-	)
-
-	networkFlowPackets = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Name: "xtrace_network_flow_packets",
-			Help: "Current network flow packets",
-		},
-		[]string{"src_ip", "dst_ip", "src_port", "dst_port", "protocol", "traffic_type", "interface", "host_ip", "collect_agg"},
-	)
-
 	networkFlowBytesRate = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "xtrace_network_flow_bytes_rate",
@@ -90,8 +75,6 @@ func initVictoriaMetrics(remoteWriteURL string) {
 	// 注册 metrics 到独立的 registry
 	vmRegistry.MustRegister(networkBytesTotal)
 	vmRegistry.MustRegister(networkPacketsTotal)
-	vmRegistry.MustRegister(networkFlowBytes)
-	vmRegistry.MustRegister(networkFlowPackets)
 	vmRegistry.MustRegister(networkFlowBytesRate)
 	vmRegistry.MustRegister(networkFlowBitsRate)
 
@@ -237,15 +220,13 @@ func createRemoteWriteRequest(metricsFamilies []*dto.MetricFamily) (*http.Reques
 
 // 获取流量类型字符串
 func getTrafficType(proto uint8, srcPort, dstPort uint16) string {
-	rocePort := uint16(0xb712) // 4791 in network byte order
-
 	switch proto {
 	case 0xFE:
 		return "RoCE_v2"
 	case 6:
 		return "TCP"
 	case 17:
-		if srcPort == rocePort || dstPort == rocePort {
+		if srcPort == roceV2Port || dstPort == roceV2Port {
 			return "RoCE_v2_UDP"
 		}
 		return "UDP"
