@@ -138,26 +138,26 @@ docker run --rm --privileged --network host \
 ```bash
 # 后台运行，完整功能
 sudo docker run -d \
-  --name xtrace-catch-ibs8f0 \
+  --name xtrace-catch-eth0 \
   --privileged \
   --network host \
   -v /sys/fs/bpf:/sys/fs/bpf:rw \
   -e VICTORIAMETRICS_ENABLED=true \
-  -e VICTORIAMETRICS_REMOTE_WRITE=http://10.10.1.84:30428/api/v1/write \
-  -e COLLECT_AGG=demo \
-  registry.tong.com:5000/xtrace-catch:0.0.5 -i ibs8f0 -t 10000 --exclude-dns
+  -e VICTORIAMETRICS_REMOTE_WRITE=http://<your-vm-server>:8428/api/v1/write \
+  -e COLLECT_AGG=<your-cluster-name> \
+  <your-registry>/xtrace-catch:latest -i eth0 -t 10000 --exclude-dns
 
 # 查看日志
-docker logs -f xtrace-catch-ibs8f0
+docker logs -f xtrace-catch-eth0
 
 # 停止容器
-docker stop xtrace-catch-ibs8f0
+docker stop xtrace-catch-eth0
 ```
 
 ### 支持的端点格式
 
-- **Text Format**: `http://vm-server:8428/api/v1/import/prometheus`
-- **Remote Write**: `http://vm-server:8428/api/v1/write` (Protobuf + Snappy)
+- **Text Format**: `http://<vm-server>:8428/api/v1/import/prometheus`
+- **Remote Write**: `http://<vm-server>:8428/api/v1/write` (Protobuf + Snappy)
 
 程序会自动检测 URL 并选择正确的格式。
 

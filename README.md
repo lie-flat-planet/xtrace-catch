@@ -140,26 +140,26 @@ docker run --rm --privileged --network host \
 ```bash
 # Run in background, full features
 sudo docker run -d \
-  --name xtrace-catch-ibs8f0 \
+  --name xtrace-catch-eth0 \
   --privileged \
   --network host \
   -v /sys/fs/bpf:/sys/fs/bpf:rw \
   -e VICTORIAMETRICS_ENABLED=true \
-  -e VICTORIAMETRICS_REMOTE_WRITE=http://10.10.1.84:30428/api/v1/write \
-  -e COLLECT_AGG=demo \
-  registry.tong.com:5000/xtrace-catch:0.0.5 -i ibs8f0 -t 10000 --exclude-dns
+  -e VICTORIAMETRICS_REMOTE_WRITE=http://<your-vm-server>:8428/api/v1/write \
+  -e COLLECT_AGG=<your-cluster-name> \
+  <your-registry>/xtrace-catch:latest -i eth0 -t 10000 --exclude-dns
 
 # View logs
-docker logs -f xtrace-catch-ibs8f0
+docker logs -f xtrace-catch-eth0
 
 # Stop container
-docker stop xtrace-catch-ibs8f0
+docker stop xtrace-catch-eth0
 ```
 
 ### Supported Endpoint Formats
 
-- **Text Format**: `http://vm-server:8428/api/v1/import/prometheus`
-- **Remote Write**: `http://vm-server:8428/api/v1/write` (Protobuf + Snappy)
+- **Text Format**: `http://<vm-server>:8428/api/v1/import/prometheus`
+- **Remote Write**: `http://<vm-server>:8428/api/v1/write` (Protobuf + Snappy)
 
 The program automatically detects the URL format and selects the correct encoding.
 
