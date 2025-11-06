@@ -24,7 +24,7 @@ docker run --rm --privileged --network host \
 # 过滤 RoCE 流量
 docker run --rm --privileged --network host \
   -v /sys/fs/bpf:/sys/fs/bpf:rw \
-  xtrace-catch:latest -i ibs8f0 -f roce
+  xtrace-catch:latest -i ib0 -f roce
 
 # 使用 docker-compose
 INTERFACE=eth0 docker-compose up
@@ -40,7 +40,7 @@ make build
 sudo ./xtrace-catch -i eth0
 
 # 过滤 RoCE 流量
-sudo ./xtrace-catch -i ibs8f0 -f roce
+sudo ./xtrace-catch -i ib0 -f roce
 ```
 
 ## 📋 系统要求
@@ -78,10 +78,10 @@ sudo yum install -y clang llvm libbpf-devel kernel-devel
 
 ```bash
 # 显示所有 RoCE 流量（v1 + v2）
-sudo ./xtrace-catch -i ibs8f0 -f roce
+sudo ./xtrace-catch -i ib0 -f roce
 
 # 仅显示 RoCE v2 流量
-sudo ./xtrace-catch -i ibs8f0 -f roce_v2
+sudo ./xtrace-catch -i ib0 -f roce_v2
 
 # 仅显示 TCP 流量
 sudo ./xtrace-catch -i eth0 -f tcp
@@ -96,7 +96,7 @@ sudo ./xtrace-catch -i eth0 -t 500
 sudo ./xtrace-catch -i eth0 -t 10000
 
 # 每30秒采集，仅RoCE流量，排除DNS
-sudo ./xtrace-catch -i ibs8f0 -f roce -t 30000 --exclude-dns
+sudo ./xtrace-catch -i ib0 -f roce -t 30000 --exclude-dns
 
 # 显示所有流量（默认5000ms）
 sudo ./xtrace-catch -i eth0
@@ -119,7 +119,7 @@ export VICTORIAMETRICS_ENABLED=true
 export VICTORIAMETRICS_REMOTE_WRITE=http://vm-server:8428/api/v1/write
 export COLLECT_AGG=cluster-01
 
-sudo ./xtrace-catch -i ibs8f0 -f roce
+sudo ./xtrace-catch -i ib0 -f roce
 ```
 
 ### Docker 运行
@@ -130,7 +130,7 @@ sudo ./xtrace-catch -i ibs8f0 -f roce
 # 前台运行，仅监控
 docker run --rm --privileged --network host \
   -v /sys/fs/bpf:/sys/fs/bpf:rw \
-  xtrace-catch:latest -i ibs8f0
+  xtrace-catch:latest -i eth0
 ```
 
 #### 完整示例（带 VictoriaMetrics + DNS 过滤）
@@ -277,7 +277,7 @@ eBPF 程序需要加载到内核，必须使用特权模式。这是 eBPF 技术
 
 支持所有标准 Linux 网络接口，包括：
 - 以太网接口（eth0, ens33 等）
-- InfiniBand 接口（ib0, ibs8f0 等）
+- InfiniBand 接口（ib0, ib1 等）
 - 虚拟接口（veth, bridge 等）
 
 ### Q4: 为什么看不到流量？

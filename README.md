@@ -26,7 +26,7 @@ docker run --rm --privileged --network host \
 # Filter RoCE traffic
 docker run --rm --privileged --network host \
   -v /sys/fs/bpf:/sys/fs/bpf:rw \
-  xtrace-catch:latest -i ibs8f0 -f roce
+  xtrace-catch:latest -i ib0 -f roce
 
 # Using docker-compose
 INTERFACE=eth0 docker-compose up
@@ -42,7 +42,7 @@ make build
 sudo ./xtrace-catch -i eth0
 
 # Filter RoCE traffic
-sudo ./xtrace-catch -i ibs8f0 -f roce
+sudo ./xtrace-catch -i ib0 -f roce
 ```
 
 ## 📋 System Requirements
@@ -80,10 +80,10 @@ Options:
 
 ```bash
 # Show all RoCE traffic (v1 + v2)
-sudo ./xtrace-catch -i ibs8f0 -f roce
+sudo ./xtrace-catch -i ib0 -f roce
 
 # Show only RoCE v2 traffic
-sudo ./xtrace-catch -i ibs8f0 -f roce_v2
+sudo ./xtrace-catch -i ib0 -f roce_v2
 
 # Show only TCP traffic
 sudo ./xtrace-catch -i eth0 -f tcp
@@ -98,7 +98,7 @@ sudo ./xtrace-catch -i eth0 -t 500
 sudo ./xtrace-catch -i eth0 -t 10000
 
 # Every 30 seconds, RoCE only, exclude DNS
-sudo ./xtrace-catch -i ibs8f0 -f roce -t 30000 --exclude-dns
+sudo ./xtrace-catch -i ib0 -f roce -t 30000 --exclude-dns
 
 # Show all traffic (default 5000ms)
 sudo ./xtrace-catch -i eth0
@@ -121,7 +121,7 @@ export VICTORIAMETRICS_ENABLED=true
 export VICTORIAMETRICS_REMOTE_WRITE=http://vm-server:8428/api/v1/write
 export COLLECT_AGG=cluster-01
 
-sudo ./xtrace-catch -i ibs8f0 -f roce
+sudo ./xtrace-catch -i ib0 -f roce
 ```
 
 ### Docker Run
@@ -132,7 +132,7 @@ sudo ./xtrace-catch -i ibs8f0 -f roce
 # Run in foreground, monitoring only
 docker run --rm --privileged --network host \
   -v /sys/fs/bpf:/sys/fs/bpf:rw \
-  xtrace-catch:latest -i ibs8f0
+  xtrace-catch:latest -i eth0
 ```
 
 #### Complete Example (with VictoriaMetrics + DNS filtering)
@@ -279,7 +279,7 @@ Yes. XDP technology is designed for production environments with minimal perform
 
 All standard Linux network interfaces are supported, including:
 - Ethernet interfaces (eth0, ens33, etc.)
-- InfiniBand interfaces (ib0, ibs8f0, etc.)
+- InfiniBand interfaces (ib0, ib1, etc.)
 - Virtual interfaces (veth, bridge, etc.)
 
 ### Q4: Why can't I see any traffic?
